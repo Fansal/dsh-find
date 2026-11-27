@@ -1,0 +1,176 @@
+import { stat } from 'node:fs/promises'
+import { readProjectIntent } from './intent.js'
+import { buildSearchQueries } from './query.js'
+import { searchRepositories, GithubError } from './github.js'
+import { rankRepos } from './score.js'
+import { llmRefineQueries, llmRerank } from './llm.js'
+import { summarizeRepo } from './summarize.js'
+
+export class ProjectError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'ProjectError'
+    this.code = code
+  }
+}
+
+const defaultDeps = {
+  readProjectIntent,
+  buildSearchQueries,
+  searchRepositories,
+  rankRepos,
+  llmRefineQueries,
+  llmRerank,
+}
+
+function isEmpty(v) {
+  return v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0)
+}
+
+// Result-quality filters (config.filters): minStars floor, fork exclusion and
+// an optional case-insensitive language whitelist. No filters = no-op.
+function applyFilters(repos, filters) {
+  if (!filters || typeof filters !== 'object') return repos
+  const minStars = typeof filters.minStars === 'number' && filters.minStars > 0 ? filters.minStars : 0
+  const excludeForks = filters.excludeForks === true
+  const excludeArchived = filters.excludeArchived === true
+  const langs = Array.isArray(filters.languages) && filters.languages.length
+    ? new Set(filters.languages.map((l) => String(l).toLowerCase()))
+    : null
+  return repos.filter((r) => {
+    if ((r.stargazers_count ?? 0) < minStars) return false
+    if (excludeForks && r.fork === true) return false
+    // m02773: relocated stubs ("Moved to wharfkit/js") are archived:true noise
+    if (excludeArchived && r.archived === true) return false
+    if (langs && !(r.language ? langs.has(String(r.language).toLowerCase()) : false)) return false
+    return true
+  })
+}
+
+// Run every query; 403 propagates immediately, 401 propagates for the caller's
+// anonymous-fallback decision. Other failures are skipped (失败不中断) BUT if
+// every query fails (e.g. bad proxy / no network -> GithubError(0)), an empty
+// result would mislead the panel into "没找到相似项目" — surface it as the
+// last error instead so callers can show a network hint (review major).
+async function searchAll(deps, queries, searchOpts) {
+  const out = []
+  let lastError = null
+  let failures = 0
+  for (const q of queries) {
+    try {
+      out.push(...(await deps.searchRepositories(q, searchOpts)))
+    } catch (e) {
+      if (e instanceof GithubError && (e.status === 403 || e.status === 401)) throw e
+      failures += 1
+      lastError = e
+    }
+  }
+  if (out.length === 0 && failures === queries.length && queries.length > 0 && lastError) {
+    throw lastError
+  }
+  return out
+}
+
+export async function analyzeProject(path, opts = {}) {
+  const deps = { ...defaultDeps, ...(opts.deps ?? {}) }
+  const config = opts.config ?? { token: null, proxy: null, llm: {} }
+  const llm = config.llm ?? {}
+  const llmOn = llm.mode === 'openai'
+
+  // Real callers (no injected deps) get the filesystem precheck; injected deps
+  // own path reality, so tests can use fake paths.
+  if (!opts.deps) {
+    try {
+      await stat(path)
+    } catch {
+      throw new ProjectError('no-project', '目录不存在或不可读')
+    }
+  }
+
+  const intent = await deps.readProjectIntent(path)
+  if (isEmpty(intent.name) && isEmpty(intent.description) && isEmpty(intent.keywords)) {
+    throw new ProjectError('no-metadata', '未找到项目元数据（package.json / README / .git）')
+  }
+
+  let queries = null
+  let llmUsed = false
+  if (llmOn) {
+    const q1 = await deps.llmRefineQueries(intent, llm)
+    if (Array.isArray(q1) && q1.length) {
+      queries = q1.slice(0, 3)
+      llmUsed = true
+    }
+  }
+  if (!queries) queries = deps.buildSearchQueries(intent)
+  if (!Array.isArray(queries) || queries.length === 0) {
+    throw new ProjectError('no-metadata', '未提炼出有效搜索词')
+  }
+
+  const searchOpts = { token: config.token ?? null, proxy: config.proxy ?? null, tlsAllowUnauthorized: config.tlsAllowUnauthorized === true }
+  let raw
+  try {
+    raw = await searchAll(deps, queries, searchOpts)
+  } catch (e) {
+    if (e instanceof GithubError && e.status === 401 && searchOpts.token) {
+      // bad token → one full anonymous retry round
+      raw = await searchAll(deps, queries, { ...searchOpts, token: null })
+    } else {
+      throw e
+    }
+  }
+
+  const seen = new Set()
+  const merged = []
+  for (const r of raw) {
+    const key = r.full_name
+    if (key && !seen.has(key)) {
+      seen.add(key)
+      merged.push(r)
+    }
+  }
+
+  const filtered = applyFilters(merged, config.filters)
+  let repos = deps.rankRepos(intent, filtered, 10, config.scoring?.weights)
+  if (llmOn && Array.isArray(repos) && repos.length) {
+    const rer = await deps.llmRerank(intent, repos, llm)
+    if (Array.isArray(rer) && rer.length) {
+      repos = rer
+      llmUsed = true
+    }
+  }
+
+  const trimmed = (repos ?? []).slice(0, 10)
+  for (const r of trimmed) {
+    r.summary = summarizeRepo(r)
+    r.summarySource = 'heuristic'
+  }
+
+  // Optional host-session-model layer: if a sessionSummary provider is wired
+  // (index.js injects one that talks to ctx.get("llm")), let its Chinese
+  // one-liners override the heuristic summary. Any failure keeps heuristics.
+  if (typeof opts.sessionSummary === 'function' && trimmed.length) {
+    try {
+      const zhMap = await opts.sessionSummary(trimmed)
+      if (zhMap instanceof Map && zhMap.size) {
+        for (const r of trimmed) {
+          const zh = zhMap.get(r.full_name)
+          if (typeof zh === 'string' && zh.trim()) {
+            r.summary = zh.trim()
+            r.summarySource = 'model'
+          }
+        }
+      }
+    } catch {
+      // keep heuristic summaries
+    }
+  }
+
+  return {
+    repos: trimmed,
+    source: llmUsed ? 'llm' : 'heuristic',
+    nameSource: intent.nameSource ?? 'pkg',
+    // m03591: when the container dir had no markers and we adopted a child
+    // project, the panel shows which child the search was based on.
+    detectedPath: intent.detectedPath ?? null,
+  }
+}
