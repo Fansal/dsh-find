@@ -173,7 +173,7 @@ test('analyzeProject surfaces the adopted child project path', async () => {
       language: 'JavaScript',
       deps: [],
       remote: null,
-      detectedPath: 'D:\\\\container\\\\kid-lib',
+      detectedPath: 'D:\\container\\kid-lib',
     }),
   }
   const out = await analyzeProject('/fake/container', {
@@ -181,7 +181,7 @@ test('analyzeProject surfaces the adopted child project path', async () => {
     deps,
   })
   assert.equal(out.nameSource, 'child-pkg')
-  assert.equal(out.detectedPath, 'D:\\\\container\\\\kid-lib')
+  assert.equal(out.detectedPath, 'D:\\container\\kid-lib')
   assert.equal(out.repos.length, 1)
 })
 
