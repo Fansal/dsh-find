@@ -1,0 +1,122 @@
+# dsh-find
+
+DSH 插件：一键识别当前会话的项目，自动在 GitHub 上找同类开源项目。
+
+在会话输入框（composer dock）右侧会出现「🔍 找同类」按钮——点击后插件读取当前项目的
+package.json / README / git remote 提炼意图，搜索 GitHub 并按相关度排序，结果面板里点开即达。
+
+## 安装
+
+### 方式一：本地目录（开发/自用）
+
+把本仓库放到任意位置，然后在 DSH profile 的 `package.json`
+（如 `C:\Users\<you>\.dsh\profiles\desktop\package.json`）注册：
+
+```jsonc
+{
+  "dependencies": {
+    "dsh-find": "file:D:/path/to/dsh-find"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": ["dsh-find"]
+    }
+  }
+}
+```
+
+然后在 profile 目录里执行 `npm install`，再重启 DSH。
+
+### 方式二：从 git 仓库安装
+
+```bat
+cd C:\Users\<you>\.dsh\profiles\desktop
+npm install github:<your-account>/dsh-find
+```
+
+再把 `"dsh-find"` 加进 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH。
+
+### 更新插件代码（重要）
+
+`file:` 依赖在安装时会被**复制**进 profile 的 `node_modules`（不是符号链接）——
+之后改本仓库代码**不会**自动生效。每次改完代码要重新同步：
+
+```bat
+robocopy "D:\path\to\dsh-find" ^
+  "C:\Users\<you>\.dsh\profiles\desktop\node_modules\dsh-find" ^
+  /MIR /XD node_modules test .git
+```
+
+同步后重启 DSH Desktop（client bundle 有内容哈希 rev 缓存，host 端插件也只在启动时加载）。
+
+## 使用
+
+1. 打开一个项目里的会话（cwd 即项目根更准）。
+2. 点输入框旁「🔍 找同类」。
+3. 面板列出相似仓库：全名 / ⭐ stars / 相关度 / 语言 / 描述，点击新标签打开。
+4. 配置在 **DSH 设置 → dsh-find 找同类** 页面填写（token / 代理 / LLM / 评分权重 / 结果过滤，分组展示，带当前值回显）。
+
+结果卡片说明：
+
+- **相关度 0-100**：紧跟在 ⭐ stars 后显示（按当前评分权重归一化；调整权重后重新搜索即更新）。
+- **中文简介**：摘要由**会话当前使用的模型**自动生成中文简介（无需配置；会话模型不可用时自动回退为仓库原文摘要；点摘要行可展开查看英文原文）。
+
+## 配置
+
+配置文件：`~/.dsh/dsh-find.config.json`。在 **DSH 设置 → dsh-find 找同类** 页面填写（带当前值回显）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `token` | GitHub PAT（可选）。匿名额度低，建议配置 |
+| `proxy` | 出网代理（可选），如 `http://127.0.0.1:7890`；走 undici ProxyAgent |
+| `tlsAllowUnauthorized` | `true` 时跳过 HTTPS 证书校验。仅当面板报「证书校验失败」（本机防火墙/杀软 HTTPS 拦截重签证书，Node 不认 Windows 证书库）且信任该网络时开启；更彻底的系统级修法是设环境变量 `NODE_USE_SYSTEM_CA=1` 后重启 DSH |
+| `llm.mode` | `'dsh'`（默认）或 `'openai'`；`'dsh'` 时复用会话模型生成中文简介 |
+| `llm.baseUrl` | OpenAI 兼容端点，如 `https://api.deepseek.com` |
+| `llm.apiKey` | 端点 API key |
+| `llm.model` | 模型名，如 `deepseek-chat` |
+| `scoring.weights` | 评分权重（可调）：`language`(25) / `keywordPerHit`(5) / `keywordCap`(45) / `stars`(20) / `recent`(10)，缺省用括号内默认 |
+| `filters.minStars` | 结果过滤：最低星数（默认 0 = 不过滤） |
+| `filters.excludeForks` | `true` 时排除 fork 仓库 |
+| `filters.excludeArchived` | `true`（默认）时排除已归档仓库——滤掉 "Moved to …" 这类已迁移的空壳仓库 |
+| `filters.languages` | 语言白名单数组（如 `["JavaScript","TypeScript"]`），非空时只保留命中语言 |
+
+LLM 行为：
+- `mode='openai'`（且 `baseUrl`/`apiKey`/`model` 齐备）：用外部端点提炼搜索词 / 重排结果，失败静默回退启发式。
+- `mode='dsh'`（默认）：结果简介直接复用会话模型（host `ctx.get('llm')` + `agentDefaultModel`）生成中文一句话总结，
+  随会话当前模型变化；会话模型不可用时静默回退为仓库原文摘要。
+- 面板结果头部始终标注搜索词来源：启发式 or LLM 提炼。
+
+## 限流说明
+
+匿名调 GitHub search API 很快会撞 403 限流（面板会提示「GitHub API 限流」）。
+处理方式：稍后再试，或配置 `token`（Personal Access Token 公共读权限即可，额度高一个量级）。
+token 失效（401）时面板提示「auth」，修正配置即可。
+全部搜索请求因网络/代理失败时面板提示「网络错误，请检查网络或代理设置」（不会再误报「没找到」）。
+
+## 已知限制
+
+- 项目识别基于启发式（package.json → README → git remote）。若当前目录自己没有任何项目标记，
+  会向下看一层：直接子目录里有项目（含 package.json 或 .git）就按那个子目录识别，面板会注明
+  「已按子目录「xxx」的项目识别」。跳过的子目录：`.` 开头的隐藏目录，以及 node_modules /
+  vendor / dist / build / target / out。再往下不做递归。
+- 目录和所有子目录都没有项目标记时，按目录名搜索，并提示「已按目录名「xxx」搜索」。
+- 结果缓存 10 分钟（同一项目重复点击直接返回，不重搜不重调模型）；改配置自动失效。
+
+## 开发
+
+```bat
+npm install
+npm test
+```
+
+`npm test` 跑 `node --test`（自动发现 `test/` 下的 `*.test.js`，需要 Node 20+）。
+
+真实联网 E2E（可选，会真的调 GitHub API）：
+
+```bat
+node scripts/e2e-manual.mjs [项目目录]
+```
+
+## 许可证
+
+MIT
