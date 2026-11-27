@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig, saveConfig } from '../config.js'
+import { LIMIT_DEFAULT, LIMIT_MAX, loadConfig, saveConfig, sanitizeLimit } from '../config.js'
 
 test('loadConfig missing file returns defaults', async () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
@@ -101,4 +101,42 @@ test('loadConfig defaults excludeArchived to true (moved-to stubs are noise)', a
   writeFileSync(join(dir2, 'dsh-find.config.json'), JSON.stringify({ filters: { excludeArchived: false } }), 'utf-8')
   const cfg2 = await loadConfig({ homeDir: homeDir2 })
   assert.equal(cfg2.filters.excludeArchived, false)
+})
+
+test('sanitizeLimit clamps into [1, LIMIT_MAX] and defaults when unusable', () => {
+  assert.equal(sanitizeLimit(20), 20)
+  assert.equal(sanitizeLimit('30'), 30)
+  assert.equal(sanitizeLimit(0), 1)
+  assert.equal(sanitizeLimit(-5), 1)
+  assert.equal(sanitizeLimit(999), LIMIT_MAX)
+  assert.equal(sanitizeLimit(12.6), 13)
+  assert.equal(sanitizeLimit(null), LIMIT_DEFAULT)
+  assert.equal(sanitizeLimit(undefined), LIMIT_DEFAULT)
+  assert.equal(sanitizeLimit(''), LIMIT_DEFAULT)
+  assert.equal(sanitizeLimit('many'), LIMIT_DEFAULT)
+  assert.equal(sanitizeLimit(NaN), LIMIT_DEFAULT)
+})
+
+test('loadConfig reads limit with default and clamp', async () => {
+  const emptyHome = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  const cfgEmpty = await loadConfig({ homeDir: emptyHome })
+  assert.equal(cfgEmpty.limit, LIMIT_DEFAULT)
+
+  const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  const dir = join(homeDir, '.dsh')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'dsh-find.config.json'), JSON.stringify({ limit: 25 }), 'utf-8')
+  assert.equal((await loadConfig({ homeDir })).limit, 25)
+
+  const homeDir2 = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  const dir2 = join(homeDir2, '.dsh')
+  mkdirSync(dir2, { recursive: true })
+  writeFileSync(join(dir2, 'dsh-find.config.json'), JSON.stringify({ limit: 500 }), 'utf-8')
+  assert.equal((await loadConfig({ homeDir: homeDir2 })).limit, LIMIT_MAX)
+})
+
+test('saveConfig then loadConfig round-trips limit', async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  await saveConfig({ limit: 30 }, { homeDir })
+  assert.equal((await loadConfig({ homeDir })).limit, 30)
 })

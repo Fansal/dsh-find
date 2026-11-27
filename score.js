@@ -59,3 +59,29 @@ export function rankRepos(intent, repos, limit = 10, weights = DEFAULT_WEIGHTS) 
       return x.repo
     })
 }
+
+// m04619: panel sort switcher. 'relevance' keeps the scorer's order (the
+// historical behaviour); the other two re-sort the candidate pool by a single
+// objective key so users can look past the relevance heuristic.
+export const SORTS = Object.freeze(['relevance', 'stars', 'updated'])
+
+export function normalizeSort(v) {
+  return SORTS.includes(v) ? v : 'relevance'
+}
+
+/** Re-sort already-scored repos. Never mutates the input array. */
+export function sortRepos(repos, sort) {
+  const key = normalizeSort(sort)
+  if (key === 'relevance') return repos
+  const list = [...(repos ?? [])]
+  if (key === 'stars') {
+    list.sort((a, b) => (b.stargazers_count ?? 0) - (a.stargazers_count ?? 0))
+  } else {
+    const at = (r) => {
+      const t = Date.parse(r.updated_at ?? '')
+      return Number.isNaN(t) ? 0 : t
+    }
+    list.sort((a, b) => at(b) - at(a))
+  }
+  return list
+}

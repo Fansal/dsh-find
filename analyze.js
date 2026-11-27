@@ -2,9 +2,11 @@ import { stat } from 'node:fs/promises'
 import { readProjectIntent } from './intent.js'
 import { buildSearchQueries } from './query.js'
 import { searchRepositories, GithubError } from './github.js'
-import { rankRepos } from './score.js'
+import { rankRepos, sortRepos } from './score.js'
 import { llmRefineQueries, llmRerank } from './llm.js'
 import { summarizeRepo } from './summarize.js'
+import { sanitizeLimit } from './config.js'
+import { sanitizeText } from './query.js'
 
 export class ProjectError extends Error {
   constructor(code, message) {
@@ -101,6 +103,24 @@ export async function analyzeProject(path, opts = {}) {
       llmUsed = true
     }
   }
+  // m04619: mode 'dsh' now also refines queries through the session model
+  // (previously it only produced the Chinese summaries). The provider is
+  // injected by index.js; when the session model is unavailable it returns
+  // null and we keep the heuristic queries.
+  if (!queries && llm.mode === 'dsh' && typeof opts.sessionQueryRefine === 'function') {
+    try {
+      const q2 = await opts.sessionQueryRefine(intent)
+      const cleaned = Array.isArray(q2)
+        ? q2.map((q) => sanitizeText(q)).filter(Boolean).slice(0, 3)
+        : []
+      if (cleaned.length) {
+        queries = cleaned
+        llmUsed = true
+      }
+    } catch {
+      // fall through to heuristic queries
+    }
+  }
   if (!queries) queries = deps.buildSearchQueries(intent)
   if (!Array.isArray(queries) || queries.length === 0) {
     throw new ProjectError('no-metadata', '未提炼出有效搜索词')
@@ -130,7 +150,9 @@ export async function analyzeProject(path, opts = {}) {
   }
 
   const filtered = applyFilters(merged, config.filters)
-  let repos = deps.rankRepos(intent, filtered, 10, config.scoring?.weights)
+  // m04619: result cap is config-driven (settings page), clamped in config.js.
+  const limit = sanitizeLimit(config.limit)
+  let repos = deps.rankRepos(intent, filtered, limit, config.scoring?.weights)
   if (llmOn && Array.isArray(repos) && repos.length) {
     const rer = await deps.llmRerank(intent, repos, llm)
     if (Array.isArray(rer) && rer.length) {
@@ -139,7 +161,12 @@ export async function analyzeProject(path, opts = {}) {
     }
   }
 
-  const trimmed = (repos ?? []).slice(0, 10)
+  // m04619: panel sort switcher — re-sort the ranked pool by the requested
+  // objective (config default or per-call override via route). 'relevance'
+  // keeps the scorer's order (same array, historical behaviour).
+  const sorted = sortRepos(repos, config.sort)
+
+  const trimmed = (sorted ?? []).slice(0, limit)
   for (const r of trimmed) {
     r.summary = summarizeRepo(r)
     r.summarySource = 'heuristic'
@@ -169,6 +196,8 @@ export async function analyzeProject(path, opts = {}) {
     repos: trimmed,
     source: llmUsed ? 'llm' : 'heuristic',
     nameSource: intent.nameSource ?? 'pkg',
+    // m04619: echo the effective cap so the panel can show/hide「加载更多」
+    limit,
     // m03591: when the container dir had no markers and we adopted a child
     // project, the panel shows which child the search was based on.
     detectedPath: intent.detectedPath ?? null,

@@ -1,12 +1,25 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { DEFAULT_WEIGHTS } from './score.js'
+import { DEFAULT_WEIGHTS, normalizeSort } from './score.js'
 
 const FILTERS_DEFAULTS = Object.freeze({ minStars: 0, excludeForks: false, excludeArchived: true, languages: Object.freeze([]) })
 
+// m04619: result cap is user-tunable (settings page + panel「加载更多」).
+// 10 is the historical default; 50 keeps the panel usable and the GitHub
+// search budget sane (4 queries x per_page 20 = 80 raw hits at most).
+export const LIMIT_DEFAULT = 10
+export const LIMIT_MAX = 50
+
 export function configPath(homeDir) {
   return join(homeDir, '.dsh', 'dsh-find.config.json')
+}
+
+/** Clamp a requested result cap into [1, LIMIT_MAX]; anything unusable = default. */
+export function sanitizeLimit(v) {
+  const n = v === null || v === undefined || v === '' ? NaN : Number(v)
+  if (!Number.isFinite(n)) return LIMIT_DEFAULT
+  return Math.min(LIMIT_MAX, Math.max(1, Math.round(n)))
 }
 
 // Keep only explicit finite non-negative numbers for the known weight keys;
@@ -62,6 +75,9 @@ export async function loadConfig(overrides) {
       },
       scoring: { weights: sanitizeWeights(parsed.scoring?.weights) },
       filters: sanitizeFilters(parsed.filters),
+      limit: sanitizeLimit(parsed.limit),
+      // m04619: default panel sort persisted across sessions
+      sort: normalizeSort(parsed.sort),
     }
   } catch {
     return {
@@ -71,6 +87,8 @@ export async function loadConfig(overrides) {
       llm: { mode: 'dsh', baseUrl: null, apiKey: null, model: null },
       scoring: { weights: { ...DEFAULT_WEIGHTS } },
       filters: { minStars: 0, excludeForks: false, excludeArchived: true, languages: [] },
+      limit: LIMIT_DEFAULT,
+      sort: 'relevance',
     }
   }
 }

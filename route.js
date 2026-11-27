@@ -1,6 +1,9 @@
 // Route registration for dsh-find. Kept separate from index.js so the
 // routing logic is unit-testable with a fake webServer (see test/route.test.js).
 
+import { sanitizeLimit } from './config.js'
+import { normalizeSort } from './score.js'
+
 /** Send a JSON HTTP response. */
 function jsonRes(res, status, data) {
   res.statusCode = status
@@ -71,6 +74,13 @@ export function registerAnalyzeRoute({ webServer, loadConfig, saveConfig, analyz
         return
       }
       const cfg = await loadConfig()
+      // m04619: per-call cap override (panel「加载更多」asks for more without
+      // rewriting the user's saved setting). Clamped the same way as config.
+      if (body.limit !== undefined) cfg.limit = sanitizeLimit(body.limit)
+      // m04619: panel sort switcher — per-call override like limit. Mutating the
+      // local cfg (not the file) means the cache snapshot naturally separates
+      // entries per sort, and the saved config stays untouched.
+      if (body.sort !== undefined) cfg.sort = normalizeSort(body.sort)
       // Cache hit: same path + unchanged config within TTL -> skip search + LLM.
       // Duck-typed so tests can pass a plain { get, set } object.
       const cached = typeof cache?.get === 'function' ? cache.get(body.path, cfg) : null
@@ -152,6 +162,10 @@ export function registerAnalyzeRoute({ webServer, loadConfig, saveConfig, analyz
           if (body.token !== undefined) merged.token = body.token
           if (body.proxy !== undefined) merged.proxy = body.proxy
           if (body.tlsAllowUnauthorized !== undefined) merged.tlsAllowUnauthorized = body.tlsAllowUnauthorized === true
+          // m04619: result cap (settings page「结果数量」), clamped on load anyway
+          if (body.limit !== undefined && body.limit !== '') merged.limit = sanitizeLimit(body.limit)
+          // m04619: default sort persisted for the panel's initial order
+          if (body.sort !== undefined && body.sort !== '') merged.sort = normalizeSort(body.sort)
           if (body.llm && typeof body.llm === 'object') merged.llm = { ...(merged.llm ?? {}), ...body.llm }
           if (body.scoring && typeof body.scoring === 'object') {
             const cur = merged.scoring ?? {}

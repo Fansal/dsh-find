@@ -157,3 +157,65 @@ function parseZhMap(raw, repos) {
   }
   return map.size > 0 ? map : null
 }
+
+// ---- session-model query refinement (m04619: mode 'dsh' also refines) ----
+
+const MAX_QUERY_LEN = 120
+
+/** Strip list markers / quotes an LLM likes to add around query lines. */
+function stripQueryLine(line) {
+  return String(line)
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Ask the DSH session model to turn the project intent into GitHub search
+ * queries. Same transport as sessionModelSummaries (host LlmRuntime), so
+ * mode:'dsh' can refine queries too — previously only the OpenAI-compatible
+ * path (llmRefineQueries) did. Returns string[] (1-3 items) or null on any
+ * failure; callers fall back to buildSearchQueries().
+ */
+export async function sessionModelQueries(intent, { llm, selection, log = () => {} }) {
+  if (!llm || !selection || !selection.provider || !selection.model) return null
+  if (!intent) return null
+  try {
+    const content = await runSessionPrompt(buildQueryPrompt(intent), { llm, selection, log, maxTokens: 512 })
+    if (!content) return null
+    const lines = content
+      .split('\n')
+      .map(stripQueryLine)
+      .filter((l) => l && l.length <= MAX_QUERY_LEN)
+    const out = []
+    for (const l of lines) {
+      if (!out.includes(l)) out.push(l)
+      if (out.length === 3) break
+    }
+    log('queries: %s', JSON.stringify(out))
+    return out.length ? out : null
+  } catch (e) {
+    log('query refine error:', e?.stack ?? String(e))
+    return null
+  }
+}
+
+function buildQueryPrompt(intent) {
+  const kws = Array.isArray(intent.keywords) ? intent.keywords : []
+  const deps = Array.isArray(intent.deps) ? intent.deps.slice(0, 8) : []
+  return (
+    '你在帮我用 GitHub 搜索找到与下面这个项目「做的事情相同或相近」的开源项目。\n' +
+    '请输出 1-3 条 GitHub 代码搜索查询词，每行一条，只输出查询词本身。\n' +
+    '要求：\n' +
+    '- 用英文关键词，不要整句、不要中文；\n' +
+    '- 每条 2-5 个词，避免过于宽泛的词（如 library、tool、app 单独使用）；\n' +
+    '- 不要输出引号、编号、解释或 markdown 代码块。\n' +
+    '项目信息：\n' +
+    `name: ${intent.name ?? ''}\n` +
+    `language: ${intent.language ?? ''}\n` +
+    `description: ${intent.description ?? ''}\n` +
+    `keywords: ${kws.join(', ')}\n` +
+    `dependencies: ${deps.join(', ')}`
+  )
+}

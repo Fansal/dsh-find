@@ -6,7 +6,7 @@ function cleanDep(dep) {
 
 // GitHub search 语法里 " 是 phrase 分隔符、| : # @ 有操作符含义；
 // 描述/README 摘要原样带进去会 422 Validation Failed，统一洗掉。
-function sanitizeText(text) {
+export function sanitizeText(text) {
   return String(text)
     .replace(/["|:#@]/g, ' ')
     .replace(/\s+/g, ' ')

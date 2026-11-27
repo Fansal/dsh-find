@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { llmRefineQueries, llmRerank, sessionModelSummaries } from '../llm.js'
+import { llmRefineQueries, llmRerank, sessionModelSummaries, sessionModelQueries } from '../llm.js'
 
 const cfg = { baseUrl: 'https://api.deepseek.com', apiKey: 'sk-x', model: 'deepseek-chat' }
 const intent = { name: 'md parser', description: 'parse markdown', keywords: [], language: 'js', deps: [], remote: null }
@@ -92,4 +92,45 @@ test('sessionModelSummaries tolerates fenced/garbage output (falls back null)', 
     { type: 'finish', reason: { kind: 'stop' } },
   ]
   assert.equal(await sessionModelSummaries(zhRepos, { llm: fakeLlm({ chunks: garbage }), selection }), null)
+})
+
+// ---- sessionModelQueries: mode 'dsh' also refines the search queries ----
+
+const qIntent = { name: 'sessionkit', description: '会话管理插件', keywords: ['session', 'rewind'], language: 'javascript', deps: ['undici'] }
+
+test('sessionModelQueries parses 1-3 query lines and strips markers', async () => {
+  const chunks = [
+    { type: 'text-delta', index: 0, text: '- session manager plugin\n' },
+    { type: 'text-delta', index: 0, text: '2. "conversation rewind"\n' },
+    { type: 'text-delta', index: 0, text: 'session toolchain\n' },
+    { type: 'text-delta', index: 0, text: 'fourth line ignored\n' },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+  const qs = await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks }), selection })
+  assert.deepEqual(qs, ['session manager plugin', 'conversation rewind', 'session toolchain'])
+})
+
+test('sessionModelQueries dedupes and drops overlong lines', async () => {
+  const long = 'x'.repeat(200)
+  const chunks = [
+    { type: 'text-delta', index: 0, text: `session manager\nsession manager\n${long}\n` },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+  const qs = await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks }), selection })
+  assert.deepEqual(qs, ['session manager'])
+})
+
+test('sessionModelQueries returns null without llm/selection or usable output', async () => {
+  assert.equal(await sessionModelQueries(qIntent, { llm: null, selection }), null)
+  assert.equal(await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks: [] }), selection: null }), null)
+  assert.equal(await sessionModelQueries(null, { llm: fakeLlm({ chunks: [] }), selection }), null)
+  const blank = [{ type: 'text-delta', index: 0, text: '  \n\n ' }, { type: 'finish', reason: { kind: 'stop' } }]
+  assert.equal(await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks: blank }), selection }), null)
+})
+
+test('sessionModelQueries returns null when the stream fails or does not stop', async () => {
+  const throwLlm = { prepareCall: async () => { throw new Error('boom') } }
+  assert.equal(await sessionModelQueries(qIntent, { llm: throwLlm, selection }), null)
+  const errChunks = [{ type: 'text-delta', index: 0, text: 'session manager' }, { type: 'finish', reason: { kind: 'error' } }]
+  assert.equal(await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks: errChunks }), selection }), null)
 })

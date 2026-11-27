@@ -252,3 +252,189 @@ test('analyze handler bypasses cache when config changed', async () => {
   await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
   assert.equal(calls, 2) // config change invalidates the cached entry
 })
+
+// ---- m04619: per-call limit override (panel「加载更多」) ----
+
+test('analyze passes a per-call limit override into the config', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, limit: 10 }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj', limit: 40 }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(seenCfg.limit, 40)
+})
+
+test('analyze clamps an out-of-range limit override', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, limit: 10 }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj', limit: 9999 }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(seenCfg.limit, 50) // LIMIT_MAX
+})
+
+test('analyze keeps the configured limit when the request omits one', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, limit: 15 }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(seenCfg.limit, 15)
+})
+
+test('config POST persists a sanitized limit', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let saved = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, limit: 10, llm: {}, scoring: { weights: {} }, filters: {} }),
+    saveConfig: async (cfg) => { saved = cfg },
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    guards: { readBody: async () => JSON.stringify({ limit: '33' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(saved.limit, 33)
+})
+
+test('config POST ignores an empty limit (field left untouched)', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let saved = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, limit: 20, llm: {}, scoring: { weights: {} }, filters: {} }),
+    saveConfig: async (cfg) => { saved = cfg },
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    guards: { readBody: async () => JSON.stringify({ limit: '' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
+  assert.equal(saved.limit, 20)
+})
+
+// ---- m04619: per-call sort override (panel sort switcher) ----
+
+test('analyze passes a per-call sort override into the config', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, sort: 'relevance' }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj', sort: 'stars' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(seenCfg.sort, 'stars')
+})
+
+test('analyze falls back to relevance for an unknown sort override', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj', sort: 'bogus' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(seenCfg.sort, 'relevance')
+})
+
+test('analyze keeps the configured sort when the request omits one', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let seenCfg = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, sort: 'updated' }),
+    analyzeProject: async (p, opts) => { seenCfg = opts.config; return { repos: [], source: 'heuristic' } },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.equal(seenCfg.sort, 'updated')
+})
+
+test('different sort overrides bypass the cache (fresh ordering)', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  const seenSorts = []
+  const cache = new Map()
+  const cacheApi = {
+    get: (key, cfg) => cache.get(key)?.cfg === JSON.stringify(cfg) ? cache.get(key).result : null,
+    set: (key, cfg, result) => cache.set(key, { cfg: JSON.stringify(cfg), result }),
+  }
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null }),
+    analyzeProject: async (p, opts) => { seenSorts.push(opts.config.sort); return { repos: [], source: 'heuristic' } },
+    cache: cacheApi,
+    guards: {
+      readBody: async () => JSON.stringify({ path: 'D:/proj', sort: seenSorts.length === 0 ? 'relevance' : 'stars' }),
+    },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  await handlers['/api/dsh-find/analyze']({ method: 'POST' }, res)
+  assert.deepEqual(seenSorts, ['relevance', 'stars'])
+})
+
+test('config POST persists a sanitized sort', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let saved = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, sort: 'relevance', llm: {}, scoring: { weights: {} }, filters: {} }),
+    saveConfig: async (cfg) => { saved = cfg },
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    guards: { readBody: async () => JSON.stringify({ sort: 'updated' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(saved.sort, 'updated')
+})
+
+test('config POST ignores an empty sort (field left untouched)', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let saved = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, sort: 'stars', llm: {}, scoring: { weights: {} }, filters: {} }),
+    saveConfig: async (cfg) => { saved = cfg },
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    guards: { readBody: async () => JSON.stringify({ sort: '' }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
+  assert.equal(saved.sort, 'stars')
+})

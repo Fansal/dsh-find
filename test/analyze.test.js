@@ -193,3 +193,152 @@ test('analyzeProject reports no detected path for a self-contained project', asy
   })
   assert.equal(out.detectedPath, null)
 })
+
+// ---- m04619: configurable result cap ----
+
+const manyRepos = (n) => Array.from({ length: n }, (_, i) => ({
+  full_name: `o/r${i}`, html_url: '', description: 'markdown parser', stargazers_count: 100 - i, language: 'javascript', topics: [], updated_at: '2026-01-01T00:00:00Z',
+}))
+
+test('analyzeProject honors config.limit for rank and trim', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(30) }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh', baseUrl: null, apiKey: null, model: null }, limit: 25 },
+    deps,
+  })
+  assert.equal(out.repos.length, 25)
+})
+
+test('analyzeProject clamps an out-of-range limit', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(60) }
+  const high = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, limit: 9999 },
+    deps,
+  })
+  assert.equal(high.repos.length, 50) // LIMIT_MAX
+  const low = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, limit: 0 },
+    deps,
+  })
+  assert.equal(low.repos.length, 1)
+})
+
+test('analyzeProject defaults to 10 results without config.limit', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(30) }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps,
+  })
+  assert.equal(out.repos.length, 10)
+})
+
+// m04619: config.sort re-orders the ranked pool (panel sort switcher)
+test('analyzeProject re-sorts by config.sort=stars and echoes limit', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(15) }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, sort: 'stars', limit: 10 },
+    deps,
+  })
+  // manyRepos gives descending stars 100-i, so stars order == index order
+  assert.deepEqual(out.repos.map((r) => r.full_name), Array.from({ length: 10 }, (_, i) => `o/r${i}`))
+  assert.equal(out.limit, 10)
+})
+
+test('analyzeProject re-sorts by config.sort=updated with unparseable dates last', async () => {
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async () => [
+      { full_name: 'o/new', html_url: '', description: '', stargazers_count: 1, language: null, topics: [], updated_at: '2026-06-01T00:00:00Z' },
+      { full_name: 'o/none', html_url: '', description: '', stargazers_count: 5000, language: null, topics: [], updated_at: null },
+      { full_name: 'o/old', html_url: '', description: '', stargazers_count: 2, language: null, topics: [], updated_at: '2020-01-01T00:00:00Z' },
+    ],
+  }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, sort: 'updated' },
+    deps,
+  })
+  assert.deepEqual(out.repos.map((r) => r.full_name), ['o/new', 'o/old', 'o/none'])
+})
+
+test('analyzeProject keeps scorer order for relevance sort', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(12) }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, sort: 'relevance' },
+    deps,
+  })
+  assert.deepEqual(out.repos.map((r) => r.full_name), Array.from({ length: 10 }, (_, i) => `o/r${i}`))
+})
+
+// ---- m04619: mode 'dsh' refines queries through the session model ----
+
+test('analyzeProject uses sessionQueryRefine in dsh mode', async () => {
+  const seen = []
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async (q) => { seen.push(q); return [{ full_name: 'a/md', html_url: '', description: '', stargazers_count: 1, language: 'javascript', topics: [], updated_at: '' }] },
+  }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps,
+    sessionQueryRefine: async () => ['session manager plugin', 'conversation rewind'],
+  })
+  assert.deepEqual(seen, ['session manager plugin', 'conversation rewind'])
+  assert.equal(out.source, 'llm')
+})
+
+test('analyzeProject sanitizes and caps session queries at 3', async () => {
+  const seen = []
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async (q) => { seen.push(q); return [{ full_name: 'a/md', html_url: '', description: '', stargazers_count: 1, language: 'javascript', topics: [], updated_at: '' }] },
+  }
+  await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps,
+    sessionQueryRefine: async () => ['"quoted:thing"', '', 'two', 'three', 'four'],
+  })
+  assert.deepEqual(seen, ['quoted thing', 'two', 'three'])
+})
+
+test('analyzeProject falls back to heuristic queries when session refine yields nothing', async () => {
+  const seen = []
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async (q) => { seen.push(q); return [{ full_name: 'a/md', html_url: '', description: '', stargazers_count: 1, language: 'javascript', topics: [], updated_at: '' }] },
+  }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps,
+    sessionQueryRefine: async () => null,
+  })
+  assert.deepEqual(seen, ['markdown parser'])
+  assert.equal(out.source, 'heuristic')
+})
+
+test('analyzeProject ignores sessionQueryRefine in openai mode and on throw', async () => {
+  const seen = []
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async (q) => { seen.push(q); return [{ full_name: 'a/md', html_url: '', description: '', stargazers_count: 1, language: 'javascript', topics: [], updated_at: '' }] },
+    llmRefineQueries: async () => ['openai query'],
+  }
+  const openai = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'openai', baseUrl: 'https://x', apiKey: 'k', model: 'm' } },
+    deps,
+    sessionQueryRefine: async () => { throw new Error('should not be called') },
+  })
+  assert.deepEqual(seen, ['openai query'])
+  assert.equal(openai.source, 'llm')
+
+  const seen2 = []
+  const deps2 = {
+    ...noopDeps,
+    searchRepositories: async (q) => { seen2.push(q); return [{ full_name: 'a/md', html_url: '', description: '', stargazers_count: 1, language: 'javascript', topics: [], updated_at: '' }] },
+  }
+  await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps: deps2,
+    sessionQueryRefine: async () => { throw new Error('boom') },
+  })
+  assert.deepEqual(seen2, ['markdown parser'])
+})
