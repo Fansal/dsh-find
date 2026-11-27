@@ -5,7 +5,7 @@ DSH 插件：一键识别当前会话的项目，自动在 GitHub 上找同类�
 在会话输入框（composer dock）右侧会出现「🔍 找同类」按钮——点击后插件读取当前项目的
 package.json / README / git remote 提炼意图，搜索 GitHub 并按相关度排序，结果面板里点开即达。
 
-面板支持**排序切换**（相关度 / 星数 / 最近更新）与**加载更多**（每轮默认 10 条，最多 50 条；同类项目就这么多时，底部会显示「已加载全部 N 条」）；
+面板支持**排序切换**（相关度 / 星数 / 最近更新）与**加载更多**（底部按钮，每轮追加 5 条，最多 50 条；同类项目就这么多时，会显示「已加载全部 N 条」）；
 设置里可开启**对比咨询**——让会话模型读同类仓库的 README 与高频 issue，为你的项目生成
 「功能差距 / 踩坑预警 / 架构借鉴 / 优先级建议」四维中文报告。
 界面文案中英双语（跟随 DSH 语言设置）。英文 quickstart 见下方 [English](#english)。
@@ -42,7 +42,7 @@ repositories on GitHub in one click.
 
 - **Relevance 0-100** shown next to ⭐ stars, driven by tunable scoring weights.
 - **Sort switcher** in the panel: relevance / stars / recently updated.
-- **Load more**: results come back 10 at a time (default), up to 50; when the pool is
+- **Load more** at the end of the results list: appends 5 more per round (default), up to 50; when the pool is
   drained the panel says "All N results loaded".
 - **Bilingual UI** (English / 中文) following the DSH language setting.
 - **Compare advice** (opt-in): the session model reads each candidate repo's README + top
@@ -121,7 +121,7 @@ robocopy "D:\path\to\dsh-find" ^
 
 1. 打开一个项目里的会话（cwd 即项目根更准）。
 2. 点输入框旁「🔍 找同类」。
-3. 面板列出相似仓库：全名 / ⭐ stars / 相关度 / 语言 / 描述，点击新标签打开；顶部可切换排序（相关度 / 星数 / 最近更新），底部「加载更多」按 10 条递增（上限 50；池子见底时改显「已加载全部 N 条」）。
+3. 面板列出相似仓库：全名 / ⭐ stars / 相关度 / 语言 / 描述，点击新标签打开；顶部可切换排序（相关度 / 星数 / 最近更新），结果列表底部「加载更多」按 5 条递增（上限 50；池子见底时改显「已加载全部 N 条」）。
 4. 配置在 **DSH 设置 → dsh-find 找同类** 页面填写（token / 代理 / LLM / 结果数量与排序 / 评分权重 / 结果过滤，分组展示，带当前值回显）。
 
 结果卡片说明：
@@ -144,7 +144,7 @@ robocopy "D:\path\to\dsh-find" ^
 | `llm.apiKey` | 端点 API key |
 | `llm.model` | 模型名，如 `deepseek-chat` |
 | `scoring.weights` | 评分权重（可调）：`language`(25) / `keywordPerHit`(5) / `keywordCap`(45) / `stars`(20) / `recent`(10)，缺省用括号内默认 |
-| `limit` | 单轮结果数（默认 10，上限 50）；面板「加载更多」按 10 条递增 |
+| `limit` | 单轮结果数（默认 10，上限 50）；面板底部「加载更多」按 5 条递增 |
 | `sort` | 面板默认排序：`relevance`（相关度）/ `stars`（星数）/ `updated`（最近更新） |
 | `filters.minStars` | 结果过滤：最低星数（默认 0 = 不过滤） |
 | `filters.excludeForks` | `true` 时排除 fork 仓库 |

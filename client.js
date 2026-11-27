@@ -452,8 +452,10 @@ window.__ModuleLoader__.load({
       ['stars', 'sort.stars'],
       ['updated', 'sort.updated'],
     ]
-    // mirrors config.js LIMIT_MAX so「加载更多」stops before the server clamp
-    const LOAD_MORE_STEP = 10
+    // mirrors config.js LIMIT_MAX so「加载更多」stops before the server clamp.
+    // m05987: step is 5 per round (was 10) and the button lives at the bottom
+    // of the results, below the last card — not in the top toolbar.
+    const LOAD_MORE_STEP = 5
     const CLIENT_LIMIT_MAX = 50
 
     // One analyze round: fetch + render into the results container. The panel
@@ -509,6 +511,8 @@ window.__ModuleLoader__.load({
             padding: '4px 10px',
             whiteSpace: 'nowrap',
             display: 'none',
+            width: '100%',
+            marginTop: '2px',
           },
         },
         t('panel.loadMore', { n: LOAD_MORE_STEP }),
@@ -538,12 +542,14 @@ window.__ModuleLoader__.load({
         },
         t('panel.compareTop', { n: 0 }),
       )
-      const toolbar = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, sortSel, cmpBtn, moreBtn)
+      // m05987: load-more moved OUT of the toolbar — it belongs at the bottom
+      // of the results (below the last card), appended after the results div.
+      const toolbar = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, sortSel, cmpBtn)
       const results = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } })
       // m05495: compare report renders above the results; each new analyze
       // round clears it (the old report may be for another sort/project).
       const reportWrap = el('div')
-      panel.append(toolbar, reportWrap, results)
+      panel.append(toolbar, reportWrap, results, moreBtn)
 
       async function refresh() {
         if (state.busy) return
