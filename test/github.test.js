@@ -80,3 +80,68 @@ test('tls error also recognized via cause chain (err.message form)', async () =>
   }
   await assert.rejects(() => searchRepositories('x', { fetchImpl }), (e) => e instanceof GithubError && e.status === 'tls')
 })
+
+// ---- m05495: material fetchers for compare advice ----
+
+import { fetchRepoReadme, fetchRepoIssues } from '../github.js'
+
+test('fetchRepoReadme requests the raw Accept and returns text', async () => {
+  let seenUrl = ''
+  let seenAccept = ''
+  const fetchImpl = async (url, init) => {
+    seenUrl = url
+    seenAccept = init.headers.Accept
+    return { ok: true, status: 200, text: async () => '# hello readme' }
+  }
+  const readme = await fetchRepoReadme('a/b', { fetchImpl })
+  assert.equal(readme, '# hello readme')
+  assert.equal(seenUrl, 'https://api.github.com/repos/a/b/readme')
+  assert.equal(seenAccept, 'application/vnd.github.raw')
+})
+
+test('fetchRepoReadme sends the bearer token when provided', async () => {
+  let seenAuth = null
+  const fetchImpl = async (url, init) => {
+    seenAuth = init.headers.Authorization
+    return { ok: true, status: 200, text: async () => 'x' }
+  }
+  await fetchRepoReadme('a/b', { fetchImpl, token: 'ghp_t' })
+  assert.equal(seenAuth, 'Bearer ghp_t')
+})
+
+test('fetchRepoReadme rejects on 404 (no README) with GithubError', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 404 })
+  await assert.rejects(() => fetchRepoReadme('a/b', { fetchImpl }), (e) => e instanceof GithubError && e.status === 404)
+})
+
+test('fetchRepoReadme rejects an invalid repo name', async () => {
+  await assert.rejects(() => fetchRepoReadme('not-a-slash-name', {}), (e) => e instanceof GithubError && e.status === 400)
+  await assert.rejects(() => fetchRepoReadme('a/b/c', {}), (e) => e instanceof GithubError && e.status === 400)
+})
+
+test('fetchRepoIssues sorts by comments, drops PRs, caps at 8, maps fields', async () => {
+  let seenUrl = ''
+  const fetchImpl = async (url) => {
+    seenUrl = url
+    const items = []
+    for (let i = 0; i < 12; i++) {
+      items.push({ title: `issue ${i}`, comments: 10 - i, state: i % 2 ? 'closed' : 'open', html_url: `u${i}`, pull_request: i % 3 === 0 ? {} : undefined })
+    }
+    return { ok: true, status: 200, json: async () => items }
+  }
+  const issues = await fetchRepoIssues('a/b', { fetchImpl })
+  assert.equal(seenUrl, 'https://api.github.com/repos/a/b/issues?sort=comments&direction=desc&per_page=10&state=all')
+  // 12 items - 4 PRs = 8 issues, then capped at 8 anyway
+  assert.equal(issues.length, 8)
+  assert.equal(issues[0].title, 'issue 1') // first non-PR
+  assert.ok(!issues.some((i) => i.title === 'issue 0')) // PR dropped
+  assert.equal(issues[0].comments, 9)
+  assert.equal(issues[0].state, 'closed')
+  assert.equal(issues[0].html_url, 'u1')
+})
+
+test('fetchRepoIssues tolerates a non-array response', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ oops: true }) })
+  const issues = await fetchRepoIssues('a/b', { fetchImpl })
+  assert.deepEqual(issues, [])
+})

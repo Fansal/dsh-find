@@ -219,3 +219,76 @@ function buildQueryPrompt(intent) {
     `dependencies: ${deps.join(', ')}`
   )
 }
+
+// ---- session-model compare report (m05495: 对比咨询 advice report) ----
+
+const README_EXCERPT_CHARS = 3000
+
+function excerpt(text, max) {
+  const s = String(text ?? '')
+  return s.length <= max ? s : s.slice(0, max) + '…'
+}
+
+/**
+ * Prompt for the four-part compare advice report. materials is an array
+ * parallel to repos: [{ readme: string|null, issues: array|null }] —
+ * missing pieces are tolerated (the report still cites repo metadata).
+ * Exported for tests.
+ */
+export function buildComparePrompt(intent, repos, materials) {
+  const kws = Array.isArray(intent.keywords) ? intent.keywords : []
+  const deps = Array.isArray(intent.deps) ? intent.deps.slice(0, 8) : []
+  const list = repos.map((r, i) => {
+    const m = Array.isArray(materials) ? materials[i] ?? {} : {}
+    const issues = Array.isArray(m.issues) ? m.issues.slice(0, 8) : []
+    return {
+      full_name: r.full_name,
+      description: r.description ?? '',
+      language: r.language ?? '',
+      topics: Array.isArray(r.topics) ? r.topics : [],
+      stars: r.stargazers_count ?? 0,
+      readmeExcerpt: m.readme ? excerpt(m.readme, README_EXCERPT_CHARS) : null,
+      topIssues: issues.map((it) => ({ title: it.title, comments: it.comments ?? 0 })),
+    }
+  })
+  return (
+    '你是资深开源项目顾问。我在开发自己的项目，下面给出我的项目信息和几个同类开源仓库的资料。\n' +
+    '请对比它们和我的项目，用中文输出一份 markdown 报告，必须包含且仅包含以下四个小节：\n' +
+    '## 功能差距（它们有而我缺的能力）\n' +
+    '## 踩坑预警（它们的高频 issue 反映的常见问题）\n' +
+    '## 架构借鉴（值得参考的设计与实现）\n' +
+    '## 优先级建议（按对我的项目的价值排序的行动建议）\n' +
+    '要求：\n' +
+    '- 具体、可执行，引用仓库时写出 full_name；\n' +
+    '- 每个小节 3-6 条要点，先给结论再给依据；\n' +
+    '- 没有相关内容的维度如实说明，不要编造。\n' +
+    '我的项目信息：\n' +
+    `name: ${intent.name ?? ''}\n` +
+    `language: ${intent.language ?? ''}\n` +
+    `description: ${intent.description ?? ''}\n` +
+    `keywords: ${kws.join(', ')}\n` +
+    `dependencies: ${deps.join(', ')}\n` +
+    '同类仓库资料（JSON）：\n' +
+    JSON.stringify(list)
+  )
+}
+
+/**
+ * Ask the DSH session model for the compare advice report. Returns the
+ * markdown string or null on any failure (missing llm/selection, stream
+ * error, empty output). Materials fetch failures are the caller's
+ * business — pass null pieces and the report degrades gracefully.
+ */
+export async function sessionModelCompare(intent, repos, materials, { llm, selection, log = () => {} }) {
+  if (!llm || !selection || !selection.provider || !selection.model) return null
+  if (!intent || !Array.isArray(repos) || repos.length === 0) return null
+  try {
+    const content = await runSessionPrompt(buildComparePrompt(intent, repos, materials), { llm, selection, log, maxTokens: 2048 })
+    if (!content) return null
+    log('compare report len: %d', content.length)
+    return content
+  } catch (e) {
+    log('compare error:', e?.stack ?? String(e))
+    return null
+  }
+}

@@ -52,6 +52,26 @@ window.__ModuleLoader__.load({
         'panel.noPath': '无法确定当前项目（没有活跃会话或 cwd）',
         'panel.sort': '排序',
         'panel.loadMore': '加载更多（再 {n} 条）',
+        'panel.compare': '对比',
+        'panel.compareTop': '对比 Top {n}',
+        'panel.compareLoading': '正在拉取仓库资料并生成对比报告…',
+        'panel.compareTitle': '对比报告',
+        'panel.compareHide': '收起报告',
+        'error.compareDisabled': '对比咨询未开启，可在设置页打开',
+        'error.compareModel': '会话模型暂不可用，无法生成对比报告（可稍后重试）',
+        'error.compareEmpty': '没有可对比的仓库',
+        'section.compare.title': '对比咨询',
+        'section.compare.desc': '开启后，面板可对相似项目拉取 README 与高频 issue，让会话模型生成四维对比报告：功能差距、踩坑预警、架构借鉴、优先级建议。',
+        'field.compare.enabled': '启用对比咨询',
+        'field.compare.enabled.hint': '关闭后面板不显示对比入口',
+        'field.compare.minStars': '候选最低星数',
+        'field.compare.minStars.hint': '只对比星数达标的项目（默认 100）',
+        'field.compare.minRelevance': '候选最低相关度',
+        'field.compare.minRelevance.hint': '0-100，只对比相关度达标的项目（默认 50）',
+        'field.compare.maxCount': '最多对比项目数',
+        'field.compare.maxCount.hint': '聚合对比时取相关度排名前 N（默认 3）',
+        'field.compare.months': '活跃窗口（月）',
+        'field.compare.months.hint': '只对比最近 N 个月内有更新的项目（默认 24）',
         'sort.relevance': '相关度',
         'sort.stars': '星数',
         'sort.updated': '最近更新',
@@ -146,6 +166,26 @@ window.__ModuleLoader__.load({
         'panel.noPath': 'Cannot determine the current project (no active session or cwd)',
         'panel.sort': 'Sort',
         'panel.loadMore': 'Load more ({n} more)',
+        'panel.compare': 'Compare',
+        'panel.compareTop': 'Compare top {n}',
+        'panel.compareLoading': 'Fetching repo materials and drafting the compare report…',
+        'panel.compareTitle': 'Compare report',
+        'panel.compareHide': 'Hide report',
+        'error.compareDisabled': 'Compare advice is off — enable it in Settings.',
+        'error.compareModel': 'Session model unavailable, report could not be generated (retry later).',
+        'error.compareEmpty': 'No repos to compare.',
+        'section.compare.title': 'Compare advice',
+        'section.compare.desc': 'When enabled, the panel can pull README + top issues of similar repos and let the session model draft a four-part report: feature gaps, pitfalls, architecture, priorities.',
+        'field.compare.enabled': 'Enable compare advice',
+        'field.compare.enabled.hint': 'Panel hides the compare entry when off',
+        'field.compare.minStars': 'Minimum stars',
+        'field.compare.minStars.hint': 'Only compare repos with enough stars (default 100)',
+        'field.compare.minRelevance': 'Minimum relevance',
+        'field.compare.minRelevance.hint': '0-100, only compare relevant-enough repos (default 50)',
+        'field.compare.maxCount': 'Max repos compared',
+        'field.compare.maxCount.hint': 'Aggregate compare takes the top N by relevance (default 3)',
+        'field.compare.months': 'Activity window (months)',
+        'field.compare.months.hint': 'Only compare repos updated within N months (default 24)',
         'sort.relevance': 'Relevance',
         'sort.stars': 'Stars',
         'sort.updated': 'Recently updated',
@@ -393,6 +433,9 @@ window.__ModuleLoader__.load({
       'no-project': 'error.noProject',
       tls: 'error.tls',
       network: 'error.network',
+      'compare-disabled': 'error.compareDisabled',
+      'compare-model': 'error.compareModel',
+      'compare-empty': 'error.compareEmpty',
     }
     function errorCopy(code, message) {
       const key = ERROR_KEYS[code]
@@ -466,15 +509,45 @@ window.__ModuleLoader__.load({
         },
         t('panel.loadMore', { n: LOAD_MORE_STEP }),
       )
-      const toolbar = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, sortSel, moreBtn)
+      // m05495 对比咨询: aggregate「对比 Top N」— server already thresholded the
+      // candidates; match them back to full repo objects from this analyze round.
+      const cmpBtn = el(
+        'button',
+        {
+          'data-dsh-find': 'compare-top',
+          onClick: () => {
+            const byName = new Map((state.repos ?? []).map((r) => [r.full_name, r]))
+            const send = (state.candidates ?? []).map((c) => byName.get(c.full_name) ?? c)
+            runCompare(send)
+          },
+          style: {
+            border: '1px solid var(--dsw-alias-border-l2, #ddd)',
+            borderRadius: '6px',
+            background: 'transparent',
+            color: 'var(--dsh-alias-label-secondary, #666)',
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '4px 10px',
+            whiteSpace: 'nowrap',
+            display: 'none',
+          },
+        },
+        t('panel.compareTop', { n: 0 }),
+      )
+      const toolbar = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, sortSel, cmpBtn, moreBtn)
       const results = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } })
-      panel.append(toolbar, results)
+      // m05495: compare report renders above the results; each new analyze
+      // round clears it (the old report may be for another sort/project).
+      const reportWrap = el('div')
+      panel.append(toolbar, reportWrap, results)
 
       async function refresh() {
         if (state.busy) return
         state.busy = true
         moreBtn.style.display = 'none'
+        cmpBtn.style.display = 'none'
         results.replaceChildren()
+        reportWrap.replaceChildren()
         const loading = el('div', { style: { padding: '8px 2px' } }, t('panel.loading'))
         results.append(loading)
         const body = { path }
@@ -506,7 +579,16 @@ window.__ModuleLoader__.load({
           return
         }
         state.requested = typeof data?.limit === 'number' ? data.limit : state.limit
-        renderResults(results, data, path)
+        // m05495: compare candidates arrive only when the settings gate is on
+        // and the thresholds pass — they drive both compare entries.
+        const candidates = Array.isArray(data?.compareCandidates) ? data.compareCandidates : []
+        state.candidates = candidates
+        state.repos = repos
+        if (candidates.length > 0) {
+          cmpBtn.textContent = t('panel.compareTop', { n: candidates.length })
+          cmpBtn.style.display = ''
+        }
+        renderResults(results, data, path, candidates.length > 0 ? { onCompare: (repo) => runCompare([repo]) } : null)
         // more results exist when the server filled the requested count
         if (typeof state.requested === 'number' && repos.length >= state.requested && state.requested < CLIENT_LIMIT_MAX) {
           moreBtn.textContent = t('panel.loadMore', { n: Math.min(LOAD_MORE_STEP, CLIENT_LIMIT_MAX - state.requested) })
@@ -514,10 +596,82 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // m05495 对比咨询: POST the repo list to the host, render the four-part
+      // advice report above the results. Re-entrant-guarded so double clicks
+      // don't double-fetch; errors reuse the same errorCopy() mapping.
+      async function runCompare(sendRepos) {
+        if (state.cmpBusy) return
+        state.cmpBusy = true
+        reportWrap.replaceChildren(
+          el('div', { style: { padding: '8px 2px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #666)' } }, t('panel.compareLoading')),
+        )
+        let data
+        try {
+          const res = await fetch('/api/dsh-find/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, repos: sendRepos }),
+          })
+          data = await res.json()
+        } catch (err) {
+          reportWrap.replaceChildren()
+          bodyText(reportWrap, t('panel.requestFailed', { msg: err?.message ?? String(err) }))
+          state.cmpBusy = false
+          return
+        }
+        reportWrap.replaceChildren()
+        if (data?.error) {
+          bodyText(reportWrap, errorCopy(data.error.code, data.error.message))
+        } else if (typeof data?.report === 'string') {
+          reportWrap.append(
+            el(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' } },
+              el('strong', { style: { fontSize: '12.5px' } }, t('panel.compareTitle')),
+              el(
+                'button',
+                {
+                  onClick: () => reportWrap.replaceChildren(),
+                  style: {
+                    border: '1px solid var(--dsw-alias-border-l2, #ddd)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--dsw-alias-label-secondary, #666)',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    padding: '2px 8px',
+                  },
+                },
+                t('panel.compareHide'),
+              ),
+            ),
+            el(
+              'div',
+              {
+                style: {
+                  whiteSpace: 'pre-wrap',
+                  fontSize: '12px',
+                  lineHeight: '1.6',
+                  maxHeight: '420px',
+                  overflow: 'auto',
+                  border: '1px solid var(--dsw-alias-border-l2, #e5e5e5)',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                },
+              },
+              data.report,
+            ),
+          )
+        } else {
+          bodyText(reportWrap, errorCopy('compare-model', ''))
+        }
+        state.cmpBusy = false
+      }
+
       refresh()
     }
 
-    function renderResults(results, data, path) {
+    function renderResults(results, data, path, cmp = null) {
       const repos = data?.repos ?? []
       // review minor: surface the query-source (LLM-refined vs heuristic) so a
       // degraded LLM path is visible instead of silently looking identical
@@ -598,6 +752,31 @@ window.__ModuleLoader__.load({
               ),
             ),
             descRow(repo),
+            // m05495 对比咨询: per-card entry — compare just this repo against
+            // the current project (state.onCompare -> runCompare([repo]))
+            cmp
+              ? el(
+                  'div',
+                  { style: { display: 'flex', justifyContent: 'flex-end' } },
+                  el(
+                    'button',
+                    {
+                      'data-dsh-find': 'compare',
+                      onClick: () => cmp.onCompare(repo),
+                      style: {
+                        border: '1px solid var(--dsw-alias-border-l2, #ddd)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--dsw-alias-label-secondary, #666)',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                      },
+                    },
+                    t('panel.compare'),
+                  ),
+                )
+              : null,
           ),
         )
       }
@@ -691,6 +870,18 @@ window.__ModuleLoader__.load({
             hintKey: 'field.languages.hint',
             kind: 'csv',
           },
+        ],
+      },
+      {
+        // m05495: 对比咨询 — settings gate; thresholds mirror COMPARE_DEFAULTS
+        titleKey: 'section.compare.title',
+        descKey: 'section.compare.desc',
+        fields: [
+          { key: 'compare.enabled', labelKey: 'field.compare.enabled', hintKey: 'field.compare.enabled.hint', kind: 'bool' },
+          { key: 'compare.minStars', labelKey: 'field.compare.minStars', hintKey: 'field.compare.minStars.hint', kind: 'number' },
+          { key: 'compare.minRelevance', labelKey: 'field.compare.minRelevance', hintKey: 'field.compare.minRelevance.hint', kind: 'number' },
+          { key: 'compare.maxCount', labelKey: 'field.compare.maxCount', hintKey: 'field.compare.maxCount.hint', kind: 'number' },
+          { key: 'compare.months', labelKey: 'field.compare.months', hintKey: 'field.compare.months.hint', kind: 'number' },
         ],
       },
     ]

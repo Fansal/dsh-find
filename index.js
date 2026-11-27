@@ -1,7 +1,8 @@
 import { registerAnalyzeRoute } from './route.js'
 import { loadConfig, saveConfig } from './config.js'
 import { analyzeProject } from './analyze.js'
-import { sessionModelSummaries, sessionModelQueries } from './llm.js'
+import { runCompare } from './compare.js'
+import { sessionModelSummaries, sessionModelQueries, sessionModelCompare } from './llm.js'
 import { createResultCache } from './cache.js'
 
 export const name = 'dsh-find'
@@ -66,14 +67,21 @@ export function apply(ctx) {
     const queries = await sessionModelQueries(intent, { llm, selection, log })
     return queries
   })
+  const sessionCompare = makeSessionRunner(ctx, 'sessionCompare', async ({ intent, repos, materials }, { llm, selection, log }) => {
+    const report = await sessionModelCompare(intent, repos, materials, { llm, selection, log })
+    if (report) log('report chars: %d', report.length)
+    return report
+  })
 
   const analyze = (path, opts = {}) => analyzeProject(path, { ...opts, sessionSummary, sessionQueryRefine })
+  const compare = (path, repos, opts = {}) => runCompare(path, repos, { ...opts, sessionCompare })
   const cache = createResultCache() // TTL 10min, max 8 entries, config-change invalidates
   ctx.effect(() => registerAnalyzeRoute({
     webServer: ctx.webServer,
     loadConfig,
     saveConfig,
     analyzeProject: analyze,
+    runCompare: compare,
     cache,
     guards: { rejectForeignOrigin: null, readBody: null },
   }), 'dsh-find: routes')

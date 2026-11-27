@@ -140,3 +140,37 @@ test('saveConfig then loadConfig round-trips limit', async () => {
   await saveConfig({ limit: 30 }, { homeDir })
   assert.equal((await loadConfig({ homeDir })).limit, 30)
 })
+
+test('loadConfig compare defaults to disabled with threshold defaults', async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  const cfg = await loadConfig({ homeDir })
+  assert.equal(cfg.compare.enabled, false)
+  assert.equal(cfg.compare.minStars, 100)
+  assert.equal(cfg.compare.minRelevance, 50)
+  assert.equal(cfg.compare.maxCount, 3)
+  assert.equal(cfg.compare.months, 24)
+})
+
+test('loadConfig reads compare and clamps thresholds', async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  const dir = join(homeDir, '.dsh')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'dsh-find.config.json'), JSON.stringify({ compare: { enabled: true, minStars: '5', minRelevance: 999, maxCount: 0, months: 'many' } }), 'utf-8')
+  const cfg = await loadConfig({ homeDir })
+  assert.equal(cfg.compare.enabled, true)
+  assert.equal(cfg.compare.minStars, 5)
+  assert.equal(cfg.compare.minRelevance, 100) // clamped
+  assert.equal(cfg.compare.maxCount, 1) // clamped, not default 3
+  assert.equal(cfg.compare.months, 24) // unusable -> default
+})
+
+test('saveConfig then loadConfig round-trips compare', async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'dsh-find-'))
+  await saveConfig({ compare: { enabled: true, minStars: 10, minRelevance: 30, maxCount: 2, months: 12 } }, { homeDir })
+  const cfg = await loadConfig({ homeDir })
+  assert.equal(cfg.compare.enabled, true)
+  assert.equal(cfg.compare.minStars, 10)
+  assert.equal(cfg.compare.minRelevance, 30)
+  assert.equal(cfg.compare.maxCount, 2)
+  assert.equal(cfg.compare.months, 12)
+})

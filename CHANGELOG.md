@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Chinese result summaries; unavailable models fall back to heuristic queries silently.
 - Settings-page card "结果数量与排序" (result count + default sort) with persisted `limit`
   and `sort` config keys.
+- **对比咨询 (Compare advice)** — opt-in via the new "对比咨询" settings card. When
+  `compare.enabled` is on, `/api/dsh-find/analyze` carries `compareCandidates` (thresholds:
+  `minStars` 100 / `minRelevance` 50 / `maxCount` 3 / `months` 24, all configurable);
+  the panel shows a per-repo「对比」button plus a「对比 Top N」aggregate button. New
+  `POST /api/dsh-find/compare` reads the current project intent fresh, pulls each repo's
+  README + top issues (single failures degrade to metadata-only), and the session model
+  writes a four-part Chinese report: 功能差距 / 踩坑预警 / 架构借鉴 / 优先级建议.
+  Errors surface as `compare-disabled` / `compare-model` / `compare-empty`.
 - CHANGELOG and English quick-start section in the README.
 
 ### Changed

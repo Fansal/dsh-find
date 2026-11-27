@@ -52,6 +52,35 @@ function sanitizeFilters(v) {
   }
 }
 
+// m05495: compare advice (「对比咨询」) — settings-gated (default OFF). When
+// enabled the panel offers per-repo / top-N comparison reports built from the
+// repo's README + top issues through the session model. Thresholds keep noise
+// out: tiny repos carry no lessons to borrow, stale repos carry outdated ones.
+export const COMPARE_DEFAULTS = Object.freeze({
+  enabled: false,
+  minStars: 100,
+  minRelevance: 50,
+  maxCount: 3,
+  months: 24,
+})
+
+/** Clamp one compare threshold; anything unusable = its default. */
+function cmpNum(raw, def, lo, hi) {
+  const n = raw === null || raw === undefined || raw === '' ? NaN : Number(raw)
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : def
+}
+
+function sanitizeCompare(v) {
+  const c = v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  return {
+    enabled: c.enabled === true,
+    minStars: cmpNum(c.minStars, COMPARE_DEFAULTS.minStars, 0, 100000),
+    minRelevance: cmpNum(c.minRelevance, COMPARE_DEFAULTS.minRelevance, 0, 100),
+    maxCount: cmpNum(c.maxCount, COMPARE_DEFAULTS.maxCount, 1, 5),
+    months: cmpNum(c.months, COMPARE_DEFAULTS.months, 1, 120),
+  }
+}
+
 export async function loadConfig(overrides) {
   const homeDir = overrides?.homeDir ?? homedir()
   const file = configPath(homeDir)
@@ -78,6 +107,8 @@ export async function loadConfig(overrides) {
       limit: sanitizeLimit(parsed.limit),
       // m04619: default panel sort persisted across sessions
       sort: normalizeSort(parsed.sort),
+      // m05495: compare-advice switch + thresholds (settings-gated, default off)
+      compare: sanitizeCompare(parsed.compare),
     }
   } catch {
     return {
@@ -89,6 +120,7 @@ export async function loadConfig(overrides) {
       filters: { minStars: 0, excludeForks: false, excludeArchived: true, languages: [] },
       limit: LIMIT_DEFAULT,
       sort: 'relevance',
+      compare: { ...COMPARE_DEFAULTS },
     }
   }
 }

@@ -118,3 +118,69 @@ export async function searchRepositories(query, opts = {}) {
     archived: r.archived === true,
   }))
 }
+
+// ---- m05495: per-repo material fetchers for compare advice (「对比咨询」) ----
+
+/** Validate an "owner/repo" full name into an API path segment pair. */
+function repoPath(fullName) {
+  const parts = String(fullName || '').split('/')
+  // exactly two non-empty segments — 'a/b/c' must not slip through as 'a/b'
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new GithubError(400, `invalid repo name: ${String(fullName)}`)
+  }
+  return `${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`
+}
+
+/** Shared GET plumbing for the material fetchers (same error surface as search). */
+async function ghGet(url, opts, accept = 'application/vnd.github+json') {
+  const headers = {
+    Accept: accept,
+    'X-GitHub-Api-Version': '2022-11-28',
+  }
+  if (opts?.token) headers.Authorization = `Bearer ${opts.token}`
+  let res
+  try {
+    const init = { method: 'GET', headers }
+    if (opts?.fetchImpl) res = await opts.fetchImpl(url, init)
+    else res = await rawFetch(url, init, opts?.proxy, opts?.tlsAllowUnauthorized)
+  } catch (err) {
+    if (isTlsError(err)) {
+      throw new GithubError('tls', `network-tls: ${err?.cause?.code ?? err?.message ?? String(err)}（HTTPS 证书校验失败）`)
+    }
+    throw new GithubError(0, `network: ${err?.message ?? String(err)}`)
+  }
+  if (!res.ok) throw new GithubError(res.status, `GitHub API error ${res.status}`)
+  return res
+}
+
+/**
+ * Fetch a repo's README as raw text (Accept: vnd.github.raw). 404 (no README)
+ * surfaces as GithubError status 404 — compare.js treats any failure as
+ * "no material" and keeps going with metadata only.
+ */
+export async function fetchRepoReadme(fullName, opts = {}) {
+  // vnd.github.raw makes the README endpoint return the decoded file body
+  // instead of the blob-metadata JSON the default Accept would yield.
+  const res = await ghGet(`https://api.github.com/repos/${repoPath(fullName)}/readme`, opts, 'application/vnd.github.raw')
+  return await res.text()
+}
+
+/**
+ * Fetch the repo's most-commented issues (its loudest pain points). The
+ * issues API also lists PRs — filtered out. Capped at 8: enough signal for
+ * a comparison report, bounded prompt size.
+ */
+export async function fetchRepoIssues(fullName, opts = {}) {
+  const res = await ghGet(`https://api.github.com/repos/${repoPath(fullName)}/issues?sort=comments&direction=desc&per_page=10&state=all`, opts)
+  const data = await res.json()
+  const items = Array.isArray(data) ? data : []
+  return items
+    .filter((i) => i && typeof i === 'object' && typeof i.title === 'string' && !i.pull_request)
+    .slice(0, 8)
+    .map((i) => ({
+      title: i.title,
+      comments: i.comments ?? 0,
+      state: i.state ?? null,
+      html_url: i.html_url ?? '',
+    }))
+}

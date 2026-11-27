@@ -172,6 +172,26 @@ export async function analyzeProject(path, opts = {}) {
     r.summarySource = 'heuristic'
   }
 
+  // m05495: compare-advice candidates (「对比咨询」) — settings-gated. The
+  // candidate list is computed from the trimmed results (what the user sees),
+  // filtered by the configured thresholds: relevance ("真同类"), stars (a repo
+  // with no community carries no lessons), recency (stale repos carry
+  // outdated ones). Client renders compare buttons only when enabled.
+  const MONTH_MS = 30.5 * 24 * 3600 * 1000
+  const cmp = config.compare?.enabled === true ? config.compare : null
+  const compareCandidates = []
+  if (cmp) {
+    const cutoff = Date.now() - (cmp.months || 24) * MONTH_MS
+    for (const r of trimmed) {
+      if (compareCandidates.length >= (cmp.maxCount || 3)) break
+      if ((r.relevance ?? 0) < (cmp.minRelevance ?? 50)) continue
+      if ((r.stargazers_count ?? 0) < (cmp.minStars ?? 100)) continue
+      if (r.fork || r.archived) continue
+      if (r.updated_at && Date.parse(r.updated_at) < cutoff) continue
+      compareCandidates.push({ full_name: r.full_name, html_url: r.html_url })
+    }
+  }
+
   // Optional host-session-model layer: if a sessionSummary provider is wired
   // (index.js injects one that talks to ctx.get("llm")), let its Chinese
   // one-liners override the heuristic summary. Any failure keeps heuristics.
@@ -201,5 +221,7 @@ export async function analyzeProject(path, opts = {}) {
     // m03591: when the container dir had no markers and we adopted a child
     // project, the panel shows which child the search was based on.
     detectedPath: intent.detectedPath ?? null,
+    // m05495: which repos qualify for compare advice (empty when disabled)
+    compareCandidates,
   }
 }

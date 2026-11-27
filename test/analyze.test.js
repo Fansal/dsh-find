@@ -342,3 +342,54 @@ test('analyzeProject ignores sessionQueryRefine in openai mode and on throw', as
   })
   assert.deepEqual(seen2, ['markdown parser'])
 })
+
+test('analyzeProject computes compareCandidates when compare is enabled', async () => {
+  const recent = new Date().toISOString()
+  const repos = [
+    { full_name: 'a/big', html_url: 'u/a', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 80 },
+    { full_name: 'b/tiny', html_url: 'u/b', description: 'd', stargazers_count: 5, language: 'javascript', topics: [], updated_at: recent, relevance: 80 },
+    { full_name: 'c/stale', html_url: 'u/c', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: '2020-01-01T00:00:00Z', relevance: 80 },
+    { full_name: 'd/forked', html_url: 'u/d', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 80, fork: true },
+    { full_name: 'e/archived', html_url: 'u/e', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 80, archived: true },
+    { full_name: 'f/lowrel', html_url: 'u/f', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 20 },
+    { full_name: 'g/ok', html_url: 'u/g', description: 'd', stargazers_count: 200, language: 'javascript', topics: [], updated_at: recent, relevance: 55 },
+  ]
+  const deps = { ...noopDeps, searchRepositories: async () => repos }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, compare: { enabled: true, minStars: 100, minRelevance: 50, maxCount: 3, months: 24 } },
+    deps,
+  })
+  assert.deepEqual(out.compareCandidates, [
+    { full_name: 'a/big', html_url: 'u/a' },
+    { full_name: 'g/ok', html_url: 'u/g' },
+  ])
+})
+
+test('analyzeProject caps compareCandidates at maxCount', async () => {
+  const recent = new Date().toISOString()
+  const repos = [1, 2, 3, 4, 5].map((n) => ({ full_name: `a/r${n}`, html_url: `u${n}`, description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 90 }))
+  const deps = { ...noopDeps, searchRepositories: async () => repos }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, compare: { enabled: true, minStars: 100, minRelevance: 50, maxCount: 2, months: 24 } },
+    deps,
+  })
+  assert.equal(out.compareCandidates.length, 2)
+  assert.equal(out.compareCandidates[0].full_name, 'a/r1')
+  assert.equal(out.compareCandidates[1].full_name, 'a/r2')
+})
+
+test('analyzeProject omits compareCandidates when compare is disabled', async () => {
+  const recent = new Date().toISOString()
+  const repos = [{ full_name: 'a/big', html_url: 'u/a', description: 'd', stargazers_count: 500, language: 'javascript', topics: [], updated_at: recent, relevance: 80 }]
+  const deps = { ...noopDeps, searchRepositories: async () => repos }
+  const off = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, compare: { enabled: false, minStars: 100, minRelevance: 50, maxCount: 3, months: 24 } },
+    deps,
+  })
+  assert.deepEqual(off.compareCandidates, [])
+  const absent = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' } },
+    deps,
+  })
+  assert.deepEqual(absent.compareCandidates, [])
+})

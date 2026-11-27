@@ -438,3 +438,96 @@ test('config POST ignores an empty sort (field left untouched)', async () => {
   await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
   assert.equal(saved.sort, 'stars')
 })
+
+// ---- compare route (m05495 对比咨询) ----
+
+test('compare route is not registered without runCompare', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  await registerAnalyzeRoute({ webServer, loadConfig: async () => ({}), analyzeProject: async () => ({ repos: [], source: 'heuristic' }) })
+  assert.equal(handlers['/api/dsh-find/compare'], undefined)
+})
+
+test('compare route passes path/repos/config and returns the report', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  const seen = []
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: 'ghp_t', compare: { enabled: true, maxCount: 3 } }),
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    runCompare: async (path, repos, opts) => {
+      seen.push({ path, repos, config: opts.config })
+      return { report: '# 报告', repos: [{ full_name: 'a/b', html_url: 'u' }] }
+    },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/proj', repos: [{ full_name: 'a/b' }] }) },
+  })
+  assert.ok(handlers['/api/dsh-find/compare'])
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/compare']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  const parsed = JSON.parse(res.body)
+  assert.equal(parsed.report, '# 报告')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].path, 'D:/proj')
+  assert.deepEqual(seen[0].repos, [{ full_name: 'a/b' }])
+  assert.equal(seen[0].config.token, 'ghp_t')
+})
+
+test('compare route rejects a missing path with 400', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({}),
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    runCompare: async () => { throw new Error('must not be called') },
+    guards: { readBody: async () => JSON.stringify({ repos: [] }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/compare']({ method: 'POST' }, res)
+  const parsed = JSON.parse(res.body)
+  assert.equal(res.statusCode, 400)
+  assert.equal(parsed.error, 'path required')
+})
+
+test('compare route passes CompareError codes through', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  const CompareError = class extends Error { constructor(c, m) { super(m); this.code = c } }
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({}),
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    runCompare: async () => { throw new CompareError('compare-disabled', '对比咨询未开启') },
+    guards: { readBody: async () => JSON.stringify({ path: 'D:/p', repos: [{ full_name: 'a/b' }] }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/compare']({ method: 'POST' }, res)
+  const parsed = JSON.parse(res.body)
+  assert.equal(res.statusCode, 200)
+  assert.equal(parsed.error.code, 'compare-disabled')
+  assert.equal(parsed.error.message, '对比咨询未开启')
+})
+
+test('config POST shallow-merges compare and persists it', async () => {
+  const handlers = {}
+  const webServer = { register: (r) => { handlers[r.path] = r.handler } }
+  let saved = null
+  await registerAnalyzeRoute({
+    webServer,
+    loadConfig: async () => ({ token: null, proxy: null, compare: { enabled: false, minStars: 100, minRelevance: 50, maxCount: 3, months: 24 }, llm: {} }),
+    saveConfig: async (cfg) => { saved = cfg },
+    analyzeProject: async () => ({ repos: [], source: 'heuristic' }),
+    guards: { readBody: async () => JSON.stringify({ compare: { enabled: true, minStars: 200 } }) },
+  })
+  const res = { setHeader() {}, statusCode: 0, end(body) { this.body = body } }
+  await handlers['/api/dsh-find/config']({ method: 'POST' }, res)
+  assert.equal(res.statusCode, 200)
+  assert.equal(saved.compare.enabled, true)
+  assert.equal(saved.compare.minStars, 200)
+  // untouched keys survive the shallow merge
+  assert.equal(saved.compare.minRelevance, 50)
+  assert.equal(saved.compare.maxCount, 3)
+  assert.equal(saved.compare.months, 24)
+})

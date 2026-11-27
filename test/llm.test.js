@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { llmRefineQueries, llmRerank, sessionModelSummaries, sessionModelQueries } from '../llm.js'
+import { llmRefineQueries, llmRerank, sessionModelSummaries, sessionModelQueries, sessionModelCompare, buildComparePrompt } from '../llm.js'
 
 const cfg = { baseUrl: 'https://api.deepseek.com', apiKey: 'sk-x', model: 'deepseek-chat' }
 const intent = { name: 'md parser', description: 'parse markdown', keywords: [], language: 'js', deps: [], remote: null }
@@ -133,4 +133,55 @@ test('sessionModelQueries returns null when the stream fails or does not stop', 
   assert.equal(await sessionModelQueries(qIntent, { llm: throwLlm, selection }), null)
   const errChunks = [{ type: 'text-delta', index: 0, text: 'session manager' }, { type: 'finish', reason: { kind: 'error' } }]
   assert.equal(await sessionModelQueries(qIntent, { llm: fakeLlm({ chunks: errChunks }), selection }), null)
+})
+
+// ---- sessionModelCompare: mode 'dsh' compare advice report (m05495) ----
+
+const cmpRepos = [
+  { full_name: 'a/big', html_url: '', description: 'markdown parser', stargazers_count: 500, language: 'js', topics: ['md'], updated_at: '' },
+  { full_name: 'g/ok', html_url: '', description: 'md toolkit', stargazers_count: 200, language: 'ts', topics: [], updated_at: '' },
+]
+const cmpMaterials = [
+  { readme: 'R'.repeat(5000), issues: [{ title: 'i1', comments: 7 }, { title: 'i2', comments: 3 }] },
+  { readme: null, issues: null },
+]
+
+test('buildComparePrompt carries four sections, intent, excerpted readme and issues', () => {
+  const prompt = buildComparePrompt(qIntent, cmpRepos, cmpMaterials)
+  assert.ok(prompt.includes('## 功能差距'), 'must include feature-gap section')
+  assert.ok(prompt.includes('## 踩坑预警'), 'must include pitfalls section')
+  assert.ok(prompt.includes('## 架构借鉴'), 'must include architecture section')
+  assert.ok(prompt.includes('## 优先级建议'), 'must include priority section')
+  assert.ok(prompt.includes('name: sessionkit'))
+  assert.ok(prompt.includes('"full_name":"a/big"'))
+  // 5000-char readme must be excerpted to 3000 chars + ellipsis
+  assert.ok(prompt.includes('R'.repeat(3000) + '…'))
+  assert.ok(!prompt.includes('R'.repeat(3001)))
+  // issues are carried as title+comments; repo 2 tolerates null materials
+  assert.ok(prompt.includes('"title":"i1","comments":7'))
+  assert.ok(prompt.includes('"full_name":"g/ok"'))
+  assert.ok(!prompt.includes('"topIssues":[null]'))
+})
+
+test('sessionModelCompare returns the model report text', async () => {
+  const chunks = [
+    { type: 'text-delta', index: 0, text: '## 功能差距\n- a/big 有 X' },
+    { type: 'text-delta', index: 0, text: '\n## 优先级建议\n- 先做 Y' },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+  const out = await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: fakeLlm({ chunks }), selection })
+  assert.equal(out, '## 功能差距\n- a/big 有 X\n## 优先级建议\n- 先做 Y')
+})
+
+test('sessionModelCompare returns null without llm/selection/repos or on failure', async () => {
+  assert.equal(await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: null, selection }), null)
+  assert.equal(await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: fakeLlm({ chunks: [] }), selection: null }), null)
+  assert.equal(await sessionModelCompare(qIntent, [], cmpMaterials, { llm: fakeLlm({ chunks: [] }), selection }), null)
+  assert.equal(await sessionModelCompare(null, cmpRepos, cmpMaterials, { llm: fakeLlm({ chunks: [] }), selection }), null)
+  const throwLlm = { prepareCall: async () => { throw new Error('boom') } }
+  assert.equal(await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: throwLlm, selection }), null)
+  const errChunks = [{ type: 'text-delta', index: 0, text: 'partial' }, { type: 'finish', reason: { kind: 'error' } }]
+  assert.equal(await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: fakeLlm({ chunks: errChunks }), selection }), null)
+  const emptyChunks = [{ type: 'finish', reason: { kind: 'stop' } }]
+  assert.equal(await sessionModelCompare(qIntent, cmpRepos, cmpMaterials, { llm: fakeLlm({ chunks: emptyChunks }), selection }), null)
 })
