@@ -1,0 +1,1 @@
+{ "name": "my-awesome-parser", "description": "A blazing fast markdown parser for node", "keywords": ["markdown", "parser", "md"], "language": "js" }
