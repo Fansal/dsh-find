@@ -52,6 +52,9 @@ window.__ModuleLoader__.load({
         'panel.noPath': '无法确定当前项目（没有活跃会话或 cwd）',
         'panel.sort': '排序',
         'panel.loadMore': '加载更多（再 {n} 条）',
+        // m05875: the server reports the pool size; when it's drained show
+        // this line instead of a load-more button that only yields a few.
+        'panel.allLoaded': '已加载全部 {n} 条',
         'panel.compare': '对比',
         'panel.compareTop': '对比 Top {n}',
         'panel.compareLoading': '正在拉取仓库资料并生成对比报告…',
@@ -166,6 +169,7 @@ window.__ModuleLoader__.load({
         'panel.noPath': 'Cannot determine the current project (no active session or cwd)',
         'panel.sort': 'Sort',
         'panel.loadMore': 'Load more ({n} more)',
+        'panel.allLoaded': 'All {n} results loaded',
         'panel.compare': 'Compare',
         'panel.compareTop': 'Compare top {n}',
         'panel.compareLoading': 'Fetching repo materials and drafting the compare report…',
@@ -579,6 +583,11 @@ window.__ModuleLoader__.load({
           return
         }
         state.requested = typeof data?.limit === 'number' ? data.limit : state.limit
+        // m05875: the analyze response echoes the pre-trim pool size — with
+        // it the panel knows exactly how many "真同类" exist, so load-more
+        // counts the real remainder and a drained pool says so explicitly
+        // (a button that yields 5 when promising 10 reads as a bug).
+        state.totalPool = typeof data?.totalPool === 'number' ? data.totalPool : null
         // m05495: compare candidates arrive only when the settings gate is on
         // and the thresholds pass — they drive both compare entries.
         const candidates = Array.isArray(data?.compareCandidates) ? data.compareCandidates : []
@@ -590,8 +599,19 @@ window.__ModuleLoader__.load({
         }
         renderResults(results, data, path, candidates.length > 0 ? { onCompare: (repo) => runCompare([repo]) } : null)
         // more results exist when the server filled the requested count
-        if (typeof state.requested === 'number' && repos.length >= state.requested && state.requested < CLIENT_LIMIT_MAX) {
-          moreBtn.textContent = t('panel.loadMore', { n: Math.min(LOAD_MORE_STEP, CLIENT_LIMIT_MAX - state.requested) })
+        const remaining = state.totalPool !== null ? Math.max(0, state.totalPool - repos.length) : null
+        if (remaining === 0 && repos.length > 0) {
+          results.append(
+            el(
+              'div',
+              { style: { padding: '4px 0 2px', fontSize: '11px', textAlign: 'center', color: 'var(--dsw-alias-label-secondary, #999)' } },
+              t('panel.allLoaded', { n: repos.length }),
+            ),
+          )
+        } else if (typeof state.requested === 'number' && repos.length >= state.requested && state.requested < CLIENT_LIMIT_MAX) {
+          moreBtn.textContent = t('panel.loadMore', {
+            n: remaining !== null ? Math.min(LOAD_MORE_STEP, remaining) : Math.min(LOAD_MORE_STEP, CLIENT_LIMIT_MAX - state.requested),
+          })
           moreBtn.style.display = ''
         }
       }

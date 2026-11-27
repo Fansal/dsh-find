@@ -218,6 +218,10 @@ export async function analyzeProject(path, opts = {}) {
     nameSource: intent.nameSource ?? 'pkg',
     // m04619: echo the effective cap so the panel can show/hide「加载更多」
     limit,
+    // m05875: size of the deduped+filtered pool BEFORE the trim — the panel
+    // uses it to know when "load more" has drained the pool (真同类就这么多),
+    // showing「已加载全部 N 条」instead of a button that yields 5 more.
+    totalPool: filtered.length,
     // m03591: when the container dir had no markers and we adopted a child
     // project, the panel shows which child the search was based on.
     detectedPath: intent.detectedPath ?? null,

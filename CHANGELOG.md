@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (per-call; the server re-sorts the ranked pool and the cache keys per sort).
 - **Result count setting** (`limit`, default 10 / max 50) plus a panel **"Load more"** button
   that appends 10 more results per round without rewriting the saved setting.
+  The analyze response now echoes `totalPool` (the deduped+filtered pool size before the
+  trim): the button counts the *real* remainder and a drained pool shows
+  「已加载全部 N 条 / All N results loaded」instead of a button that yields fewer than promised.
 - **Bilingual UI** (English / 中文) — all panel, button, error and settings texts bound through
   `ctx.locale` with dictionary fallback.
 - **Session-model query refinement** — `llm.mode: 'dsh'` (default) now refines search queries

@@ -232,6 +232,44 @@ test('analyzeProject defaults to 10 results without config.limit', async () => {
   assert.equal(out.repos.length, 10)
 })
 
+// m05875: the panel needs the pre-trim pool size to know when load-more has
+// drained the pool (真同类总共就这么多) — totalPool echoes filtered.length.
+test('analyzeProject echoes totalPool: the pool size before the trim', async () => {
+  const deps = { ...noopDeps, searchRepositories: async () => manyRepos(15) }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, limit: 10 },
+    deps,
+  })
+  assert.equal(out.repos.length, 10)
+  assert.equal(out.totalPool, 15)
+
+  const exhausted = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, limit: 50 },
+    deps,
+  })
+  assert.equal(exhausted.repos.length, 15)
+  assert.equal(exhausted.totalPool, 15)
+})
+
+// m05875: filters shrink the pool before the trim, and totalPool must
+// reflect the post-filter size, not the raw hit count.
+test('analyzeProject totalPool reflects filters, not raw hits', async () => {
+  const deps = {
+    ...noopDeps,
+    searchRepositories: async () => [
+      ...manyRepos(6),
+      { full_name: 'o/tiny', html_url: '', description: '', stargazers_count: 0, language: null, topics: [], updated_at: '2026-01-01T00:00:00Z' },
+      { full_name: 'o/forked', html_url: '', description: '', stargazers_count: 400, fork: true, language: null, topics: [], updated_at: '2026-01-01T00:00:00Z' },
+    ],
+  }
+  const out = await analyzeProject('/fake/path', {
+    config: { token: null, proxy: null, llm: { mode: 'dsh' }, limit: 10, filters: { minStars: 50, excludeForks: true } },
+    deps,
+  })
+  assert.equal(out.repos.length, 6)
+  assert.equal(out.totalPool, 6)
+})
+
 // m04619: config.sort re-orders the ranked pool (panel sort switcher)
 test('analyzeProject re-sorts by config.sort=stars and echoes limit', async () => {
   const deps = { ...noopDeps, searchRepositories: async () => manyRepos(15) }
