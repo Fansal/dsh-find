@@ -1,8 +1,11 @@
 node_modules/
+npm-debug.log*
 *.log
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
+# The intent fixture's .git/config is materialized at test runtime
+# (git refuses to track any path containing a .git component).
 test/fixtures/sample-project/.git/
