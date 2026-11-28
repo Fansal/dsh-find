@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dsh.profile.bundles` entry must be updated to `"dsh-find-project"`. Internal identities
   (routes `/api/dsh-find/*`, config file `~/.dsh/dsh-find.config.json`, i18n namespace) are
   unchanged, so existing settings and tokens keep working.
+- **Unknown freshness no longer scores zero** (m07049): a missing or unparseable
+  `updated_at` now earns a neutral half of the freshness bonus instead of 0, so
+  repos whose source omits the date are not buried below provably stale ones
+  (learned from Eray114514/dsh-find-plugins).
 
 ### Added
 

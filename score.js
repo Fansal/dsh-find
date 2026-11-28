@@ -12,12 +12,16 @@ export const DEFAULT_WEIGHTS = Object.freeze({
   recent: 10,
 })
 
-function isRecentTwoYears(updatedAt) {
-  if (!updatedAt) return false
+// m07049: "unknown" is not evidence of abandonment. A missing or unparseable
+// updated_at earns a neutral half of the freshness bonus instead of zero, so
+// repos whose source omits the date are not buried below provably stale ones.
+function freshnessBonus(updatedAt, weights) {
+  const neutral = Math.round(weights.recent / 2)
+  if (!updatedAt) return neutral
   const t = Date.parse(updatedAt)
-  if (Number.isNaN(t)) return false
+  if (Number.isNaN(t)) return neutral
   const cutoff = Date.now() - 2 * 365 * 24 * 3600 * 1000
-  return t >= cutoff
+  return t >= cutoff ? weights.recent : 0
 }
 
 // m06671: the repo NAME is the strongest "same kind of project" signal —
@@ -101,7 +105,7 @@ function similarity(intent, repo, keywords, weights = DEFAULT_WEIGHTS) {
     score += (Math.log2((repo.stargazers_count ?? 0) + 1) / STAR_MAX_LOG2) * weights.stars
   }
 
-  if (isRecentTwoYears(repo.updated_at)) score += weights.recent
+  score += freshnessBonus(repo.updated_at, weights)
 
   return score
 }

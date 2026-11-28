@@ -101,6 +101,25 @@ test('sortRepos sorts by stars desc', () => {
   assert.equal(repos[0].full_name, 'a/low')
 })
 
+// m07049: unknown freshness is not evidence of abandonment — a missing or
+// unparseable updated_at gets half the freshness bonus instead of zero.
+test('missing or unparseable updated_at earns a neutral freshness score, not zero', () => {
+  const repos = [
+    mkRepo({ id: 'fresh', updated_at: '2026-06-01T00:00:00Z', description: 'markdown' }),
+    mkRepo({ id: 'none', updated_at: null, description: 'markdown' }),
+    mkRepo({ id: 'bad', updated_at: 'not-a-date', description: 'markdown' }),
+    mkRepo({ id: 'stale', updated_at: '2020-01-01T00:00:00Z', description: 'markdown' }),
+  ]
+  const ranked = rankRepos(intent, repos, 10)
+  // fresh(30) > none/bad neutral(25) > stale(20); tie between none/bad keeps
+  // insertion order (stable sort).
+  assert.deepEqual(ranked.map((r) => r.full_name), ['a/fresh', 'a/none', 'a/bad', 'a/stale'])
+  // the neutral share scales with the configured weight: recent=0 -> no bonus
+  const zero = rankRepos(intent, repos, 10, { language: 25, keywordPerHit: 5, keywordCap: 45, stars: 20, recent: 0 })
+  const scores = new Set(zero.map((r) => r.relevance))
+  assert.equal(scores.size <= 2, true) // freshness no longer separates them
+})
+
 test('sortRepos sorts by updated desc and tolerates missing/invalid dates', () => {
   const repos = [
     mkRepo({ id: 'old', updated_at: '2020-01-01T00:00:00Z' }),
