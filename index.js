@@ -5,7 +5,7 @@ import { runCompare } from './compare.js'
 import { sessionModelSummaries, sessionModelQueries, sessionModelCompare } from './llm.js'
 import { createResultCache } from './cache.js'
 
-export const name = 'dsh-find'
+export const name = 'dsh-find-project'
 export const inject = ['webServer']
 
 /**

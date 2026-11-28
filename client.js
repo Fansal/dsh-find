@@ -5,7 +5,7 @@
 // m04619: i18n via ctx.locale（zh/en dicts + fallback），排序切换、结果数量设置、加载更多。
 
 window.__ModuleLoader__.load({
-  id: 'dsh-find',
+  id: 'dsh-find-project',
   factory: (require) => {
     // resolveProjectPath 优先取 require 的 client-util.js；require 不可用时用等价内联兜底
     let resolvePath = null
@@ -1218,7 +1218,7 @@ window.__ModuleLoader__.load({
     }
 
     module.exports = {
-      name: 'dsh-find',
+      name: 'dsh-find-project',
       inject: ['sessions', 'slots', 'locale'],
       apply(ctx) {
         // m04619: bind the locale dictionaries; t() falls back to the zh/en

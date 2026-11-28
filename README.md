@@ -1,4 +1,4 @@
-# dsh-find
+# dsh-find-project
 
 DSH 插件：一键识别当前会话的项目，自动在 GitHub 上找同类开源项目。
 
@@ -23,11 +23,11 @@ repositories on GitHub in one click.
    ```jsonc
    {
      "dependencies": {
-       "dsh-find": "file:D:/path/to/dsh-find"
+       "dsh-find-project": "file:D:/path/to/dsh-find-project"
      },
      "dsh": {
        "profile": {
-         "bundles": ["dsh-find"]
+         "bundles": ["dsh-find-project"]
        }
      }
    }
@@ -89,11 +89,11 @@ Config file: `~/.dsh/dsh-find.config.json` (edited from the settings page):
 ```jsonc
 {
   "dependencies": {
-    "dsh-find": "file:D:/path/to/dsh-find"
+    "dsh-find-project": "file:D:/path/to/dsh-find-project"
   },
   "dsh": {
     "profile": {
-      "bundles": ["dsh-find"]
+      "bundles": ["dsh-find-project"]
     }
   }
 }
@@ -105,10 +105,10 @@ Config file: `~/.dsh/dsh-find.config.json` (edited from the settings page):
 
 ```bat
 cd C:\Users\<you>\.dsh\profiles\desktop
-npm install github:<your-account>/dsh-find
+npm install github:<your-account>/dsh-find-project
 ```
 
-再把 `"dsh-find"` 加进 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH。
+再把 `"dsh-find-project"` 加进 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 DSH。
 
 ### 更新插件代码（重要）
 
@@ -117,7 +117,7 @@ npm install github:<your-account>/dsh-find
 
 ```bat
 robocopy "D:\path\to\dsh-find" ^
-  "C:\Users\<you>\.dsh\profiles\desktop\node_modules\dsh-find" ^
+  "C:\Users\<you>\.dsh\profiles\desktop\node_modules\dsh-find-project" ^
   /MIR /XD node_modules test .git
 ```
 

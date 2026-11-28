@@ -1,5 +1,5 @@
 {
-  "name": "dsh-find",
+  "name": "dsh-find-project",
   "version": "0.1.0",
   "description": "DSH plugin: identify the current project and find similar GitHub repositories.",
   "type": "module",

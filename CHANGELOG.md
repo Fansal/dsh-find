@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed the package to `dsh-find-project`** (m06953): npm/bundle name, cordis patch id,
+  client loader id, and host service name all move together; profile `dependencies` key and
+  `dsh.profile.bundles` entry must be updated to `"dsh-find-project"`. Internal identities
+  (routes `/api/dsh-find/*`, config file `~/.dsh/dsh-find.config.json`, i18n namespace) are
+  unchanged, so existing settings and tokens keep working.
+
 ### Added
 
 - **Panel sort switcher** — re-order results by relevance / stars / recently updated
