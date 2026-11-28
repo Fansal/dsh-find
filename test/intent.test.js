@@ -44,6 +44,62 @@ test('extractKeywords drops stop words', () => {
   assert.ok(!kw.some((w) => ['the', 'a', 'for'].includes(w)))
 })
 
+// m06420-1: the old tokenizer was `split(/[^a-z0-9]+/)`, which silently threw
+// away every Chinese description — a zh README produced zero keywords and the
+// panel fell back to name-only queries.
+test('extractKeywords keeps Chinese descriptions via bigrams', () => {
+  const kw = extractKeywords({
+    name: '会话工具',
+    description: '识别当前项目并搜索同类开源项目',
+    keywords: [],
+    language: 'javascript',
+    deps: [],
+    remote: null,
+  })
+  assert.ok(kw.length > 0, 'a Chinese-only intent must still yield keywords')
+  assert.ok(kw.includes('项目'), `expected the bigram 项目, got: ${JSON.stringify(kw)}`)
+  // whole runs are not searchable terms
+  assert.ok(!kw.some((w) => w.length > 4 && /[\u4e00-\u9fff]/.test(w)), JSON.stringify(kw))
+})
+
+test('extractKeywords weights the name above the description', () => {
+  const kw = extractKeywords({
+    name: 'markdown',
+    description: 'a tool for parsing markdown files quickly',
+    keywords: [],
+    language: null,
+    deps: [],
+    remote: null,
+  })
+  assert.equal(kw[0], 'markdown', `name word must rank first, got: ${JSON.stringify(kw)}`)
+  assert.equal(kw.filter((w) => w === 'markdown').length, 1, 'duplicates must collapse into one weighted term')
+})
+
+test('extractKeywords drops marketing filler and folds plurals', () => {
+  const kw = extractKeywords({
+    name: 'widgets',
+    description: 'a simple fast plugin for awesome tools',
+    keywords: [],
+    language: null,
+    deps: [],
+    remote: null,
+  })
+  assert.ok(!kw.some((w) => ['simple', 'fast', 'plugin', 'awesome', 'tools', 'tool'].includes(w)), JSON.stringify(kw))
+  assert.ok(kw.includes('widget'), `expected the folded form widget, got: ${JSON.stringify(kw)}`)
+})
+
+test('extractKeywords never spends a slot on the language', () => {
+  const kw = extractKeywords({
+    name: 'thing',
+    description: 'thing thing thing',
+    keywords: [],
+    language: 'javascript',
+    deps: [],
+    remote: null,
+  })
+  assert.ok(!kw.includes('javascript'), `language is already a query qualifier: ${JSON.stringify(kw)}`)
+})
+
 test('readProjectIntent on dir without package.json/readme returns minimal intent', async () => {
   // isolated tmp dir OUTSIDE the dsh-find tree, so the bounded upward walk
   // (m03403) cannot adopt any ancestor's package.json

@@ -52,6 +52,12 @@ repositories on GitHub in one click.
   description; click a summary row to expand the original).
 - Heuristic project detection with a child-directory fallback: if the session directory has no
   `package.json` / README / git remote, a real project one level down is adopted automatically.
+- **Weighted, CJK-aware keyword extraction** — one shared tokenizer feeds both the search
+  queries and the relevance scorer, so Chinese descriptions match instead of being dropped,
+  and keywords are ranked by source (`name` > `keywords` > `description`).
+- **Gradient queries** — because GitHub search is AND semantics, one long query matches
+  nothing: the plugin sends up to 5 queries from precise (`name` + description words) to a
+  wide fallback (top 2 keywords, no `language:` qualifier), with duplicates removed.
 - Host-side GitHub proxy: the token never reaches the browser (devtools); search goes through
   `/api/dsh-find/analyze` on the DSH web server.
 - Results cached 10 minutes per (path + config); changing any setting invalidates the cache.
@@ -128,6 +134,7 @@ robocopy "D:\path\to\dsh-find" ^
 
 - **相关度 0-100**：紧跟在 ⭐ stars 后显示（按当前评分权重归一化；调整权重后重新搜索即更新）。
 - **中文简介**：摘要由**会话当前使用的模型**自动生成中文简介（无需配置；会话模型不可用时自动回退为仓库原文摘要；点摘要行可展开查看英文原文）。
+- **搜索词怎么来**：先把项目意图（name / keywords / description / language / deps）分词成关键词——同一套分词器也用于打分，所以中文描述能参与匹配；关键词按来源加权（项目名 ×3 > keywords ×2 > 描述 ×1）取前 8 个。因为 GitHub 搜索是 AND 语义，一条 query 塞满关键词必然 0 命中，所以最多发 5 条精度递减的查询：① 项目名 + 4 个描述实词 → ② 仅项目名（工作马）→ ③ 关键词 3 个一组（`in:description,topics`，最多 2 组）→ ④ 前两个关键词的宽查询（去掉 `language:` 限定，接住写在别的语言里的同类）→ ⑤ 依赖共现（`in:readme`，超上限时先丢）。
 - **对比咨询**：设置页「对比咨询」开关打开后，顶部出现「对比 Top N」聚合按钮、每个候选仓库卡片出现「对比」按钮。点击后插件拉取所选仓库的 README 与高频 issue，由会话模型生成中文四维报告——**功能差距 / 踩坑预警 / 架构借鉴 / 优先级建议**，渲染在结果列表上方，可一键收起。候选默认门槛：相关度 ≥ 50、星数 ≥ 100、近 24 个月有更新、最多 3 个（全部可在设置里调）；开关关闭时面板不出现任何对比入口。
 
 ## 配置

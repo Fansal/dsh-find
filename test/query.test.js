@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSearchQueries } from '../query.js'
+import { buildSearchQueries, MAX_QUERIES } from '../query.js'
 
 const intent = {
   name: 'my-awesome-parser',
@@ -11,9 +11,9 @@ const intent = {
   remote: null,
 }
 
-test('buildSearchQueries returns 1-4 queries, first includes name+description', () => {
+test('buildSearchQueries returns 1-MAX_QUERIES queries, first includes name+description', () => {
   const qs = buildSearchQueries(intent)
-  assert.ok(qs.length >= 1 && qs.length <= 4)
+  assert.ok(qs.length >= 1 && qs.length <= MAX_QUERIES)
   assert.match(qs[0], /my-awesome-parser/)
   assert.match(qs[0], /markdown parser/)
   assert.match(qs[0], /language:javascript/)
@@ -81,4 +81,61 @@ test('buildSearchQueries falls back to extracted keywords when intent.keywords e
   const kwQ = qs.find((q) => q.endsWith('in:description,topics language:javascript'))
   assert.ok(kwQ, `expected a keywords query, got: ${JSON.stringify(qs)}`)
   assert.match(kwQ, /markdown/)
+})
+
+// m06420-2: GitHub queries are AND, so one query carrying every keyword is a
+// guaranteed zero. Keywords must be split into short groups instead.
+test('buildSearchQueries splits keywords into short AND-safe groups', () => {
+  const qs = buildSearchQueries(intent)
+  for (const q of qs) {
+    const words = q.replace(/\s+in:[^ ]+/, '').replace(/\s+language:[^ ]+/, '').trim().split(/\s+/)
+    assert.ok(words.length <= 6, `query too long for AND semantics: ${q}`)
+  }
+  const kwQs = qs.filter((q) => q.includes('in:description,topics'))
+  assert.ok(kwQs.length >= 1)
+  for (const q of kwQs) {
+    const words = q.replace(/\s+in:[^ ]+/, '').replace(/\s+language:[^ ]+/, '').trim().split(/\s+/)
+    assert.ok(words.length <= 3, `keyword group must stay at 3 words: ${q}`)
+  }
+})
+
+test('buildSearchQueries adds a language-free wide fallback after the precise ones', () => {
+  const qs = buildSearchQueries(intent)
+  const wide = qs.filter((q) => !q.includes('language:') && q.includes('in:name,description,readme'))
+  assert.equal(wide.length, 1, `expected exactly one wide fallback, got: ${JSON.stringify(qs)}`)
+  const idx = qs.indexOf(wide[0])
+  assert.ok(idx >= 2, 'the wide query must come after the precise ones')
+})
+
+test('buildSearchQueries never exceeds the search-call budget', () => {
+  const fat = {
+    name: 'big',
+    description: 'alpha beta gamma delta epsilon zeta eta theta iota kappa',
+    keywords: ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'],
+    language: 'javascript',
+    deps: ['a-dep', 'b-dep', 'c-dep'],
+    remote: null,
+  }
+  assert.equal(buildSearchQueries(fat).length, MAX_QUERIES)
+})
+
+// The real failure mode was that a Chinese name produced NO usable query at all
+// (the old ASCII-only split dropped it). A Chinese description, on the other
+// hand, must not leak into an AND query as junk bigrams.
+test('buildSearchQueries keeps a Chinese project name as a search term', () => {
+  const zh = {
+    name: '会话工具',
+    description: '识别当前项目并搜索同类开源项目',
+    keywords: [],
+    language: null,
+    deps: [],
+    remote: null,
+  }
+  const qs = buildSearchQueries(zh)
+  assert.ok(qs.length >= 1)
+  const kwQ = qs.find((q) => q.includes('in:description,topics'))
+  assert.ok(kwQ, JSON.stringify(qs))
+  assert.match(kwQ, /会话工具/)
+  // description-only bigrams would be unmatchable junk
+  assert.ok(!/别当|前项|并搜/.test(kwQ), `description CJK must not reach a query: ${kwQ}`)
 })

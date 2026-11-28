@@ -1,7 +1,15 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
-export const STOP_WORDS = new Set(['the', 'a', 'an', 'for', 'and', 'or', 'to', 'of', 'with', 'in', 'on', 'app', 'tool', 'library', 'project', 'client', 'server'])
+// Two families: grammar (the/a/for…) and marketing filler that shows up in
+// nearly every package.json (plugin, simple, fast, awesome…). Both are noise in
+// a GitHub query — 'plugin' alone matches a hundred thousand repos.
+export const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'for', 'and', 'or', 'to', 'of', 'with', 'in', 'on', 'is', 'it', 'this', 'that',
+  'app', 'tool', 'library', 'project', 'client', 'server',
+  'plugin', 'plugins', 'simple', 'fast', 'easy', 'modern', 'next', 'awesome', 'blazing',
+  'lightweight', 'minimal', 'powered', 'based', 'using', 'use', 'via', 'your', 'our', 'my',
+])
 
 function readSafe(file) {
   try {
@@ -169,8 +177,94 @@ export async function readProjectIntent(projectPath) {
   }
 }
 
+// m06420-1: keywords drive BOTH the GitHub queries (query.js) and the local
+// relevance score (score.js), so tokenizing lives here and is exported — a
+// keyword that the scorer cannot match (or vice versa) is a silent dead weight.
+//
+// Two behaviours the old ASCII-only split got wrong:
+//   1. Chinese descriptions were dropped wholesale (`/[^a-z0-9]+/`), so a zh
+//      README produced zero keywords and query.js fell back to name-only.
+//   2. Keywords were unweighted and cut by appearance order, so a name word
+//      could be displaced by filler from the description.
+const CJK_RE = /[\u4e00-\u9fff]/
+
+export function isCjkToken(word) {
+  return CJK_RE.test(String(word ?? ''))
+}
+
+// Deliberately tiny morphological folding — plural only, because the scorer
+// and the query builder must fold identically or a keyword matches on one side
+// and not the other. 'repositories' -> 'repository' (real word) rather than
+// 'repositorie' (matches nothing).
+function foldToken(word) {
+  if (word.length >= 6 && word.endsWith('ies')) return word.slice(0, -3) + 'y'
+  if (word.length >= 5 && word.endsWith('s') && !/(?:ss|us|is|os)$/.test(word)) return word.slice(0, -1)
+  return word
+}
+
+// CJK has no spaces, so a run like '识别当前项目并搜索同类' is one token and
+// matches nothing (neither GitHub nor the local scorer indexes whole runs).
+// Cheap fix that works on both sides: split runs into overlapping bigrams, so
+// '项目' becomes a term that a repo description can actually contain.
+function cjkBigrams(run) {
+  if (run.length <= 2) return [run]
+  const out = []
+  for (let i = 0; i + 2 <= run.length; i += 1) out.push(run.slice(i, i + 2))
+  return out
+}
+
+// cjk modes:
+//   'bigram' (default) — overlapping bigrams; used for scoring against repo
+//              descriptions and for prose in general.
+//   'run'    — keep the whole run; used for the project NAME, which is a short
+//              proper noun and a better search term intact than sliced into
+//              junk bigrams like 话工 out of 会话工具.
+//   'none'   — drop CJK entirely; used when building AND queries from a prose
+//              description, where a Chinese sentence can never match.
+export function tokenize(text, { cjk = 'bigram' } = {}) {
+  const raw = String(text ?? '').toLowerCase().match(/[a-z0-9]+|[\u4e00-\u9fff]+/g) ?? []
+  const out = []
+  for (const word of raw) {
+    if (isCjkToken(word)) {
+      if (cjk === 'none') continue
+      if (STOP_WORDS.has(word)) continue
+      if (cjk === 'run') {
+        if (word.length >= 2) out.push(word)
+        continue
+      }
+      out.push(...cjkBigrams(word))
+      continue
+    }
+    // fold first, then drop stop words: 'tools' -> 'tool' must still be caught
+    const folded = foldToken(word)
+    if (STOP_WORDS.has(word) || STOP_WORDS.has(folded)) continue
+    out.push(folded)
+  }
+  return out
+}
+
+// name > package.json keywords > description: the name is what the author
+// chose deliberately, the description is usually boilerplate prose.
+const SOURCE_WEIGHTS = Object.freeze({ name: 3, keywords: 2, description: 1 })
+export const KEYWORD_LIMIT = 8
+
 export function extractKeywords(intent) {
-  const raw = [intent.name, intent.description, ...(intent.keywords ?? []), intent.language ?? ''].join(' ').toLowerCase()
-  const words = raw.split(/[^a-z0-9]+/).filter((w) => w.length > 0 && !STOP_WORDS.has(w))
-  return [...new Set(words)].slice(0, 12)
+  const score = new Map()
+  const add = (text, weight, opts) => {
+    for (const word of tokenize(text, opts)) score.set(word, (score.get(word) ?? 0) + weight)
+  }
+
+  // The name is a short proper noun: keep a Chinese name intact ('会话工具')
+  // instead of slicing it into bigrams ('话工'), which is a search term that
+  // matches nothing.
+  add(intent.name, SOURCE_WEIGHTS.name, { cjk: 'run' })
+  add((intent.keywords ?? []).join(' '), SOURCE_WEIGHTS.keywords)
+  add(intent.description, SOURCE_WEIGHTS.description)
+  // intent.language is intentionally absent: it is already sent as the
+  // `language:` qualifier, so repeating it here burns a keyword slot.
+
+  return [...score.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, KEYWORD_LIMIT)
+    .map(([word]) => word)
 }

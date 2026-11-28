@@ -1,4 +1,4 @@
-import { extractKeywords } from './intent.js'
+import { extractKeywords, tokenize } from './intent.js'
 
 const STAR_MAX_LOG2 = Math.log2(1000001)
 
@@ -27,10 +27,10 @@ function similarity(intent, repo, keywords, weights = DEFAULT_WEIGHTS) {
     score += weights.language
   }
 
-  const haystack = [repo.full_name ?? '', repo.description ?? '', (repo.topics ?? []).join(' ')]
-    .join(' ')
-    .toLowerCase()
-  const words = new Set(haystack.split(/[^a-z0-9]+/).filter(Boolean))
+  const haystack = [repo.full_name ?? '', repo.description ?? '', (repo.topics ?? []).join(' ')].join(' ')
+  // m06420-1: same tokenizer as extractKeywords, so a Chinese description can
+  // actually match (bigrams) and folded forms line up on both sides.
+  const words = new Set(tokenize(haystack))
 
   let hits = 0
   for (const kw of keywords) {

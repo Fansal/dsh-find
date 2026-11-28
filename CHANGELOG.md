@@ -41,6 +41,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/api/dsh-find/analyze` response now echoes the effective `limit` so the panel can
   show/hide "Load more".
 - Config `sort` persisted and sanitized (`normalizeSort`, unknown → `relevance`).
+- **Keyword extraction rewritten** (`intent.js`) — one shared `tokenize(text, { cjk })`
+  now feeds both query building and relevance scoring:
+  - CJK support: the old ASCII-only `split(/[^a-z0-9]+/)` dropped Chinese descriptions
+    entirely, so a Chinese project produced no usable query. Chinese now tokenizes into
+    overlapping bigrams (or whole runs for name/keywords), and the scorer matches them.
+  - Weighted extraction: `name ×3 > keywords ×2 > description ×1`, top 8 instead of the
+    first 12 words by appearance order.
+  - Bigger stop-word list (marketing words like `plugin` / `simple` / `fast` / `awesome`
+    are pure noise in an AND query) and minimal plural folding (`repositories` →
+    `repository`), applied identically on the scoring side.
+  - `language` no longer competes for a keyword slot — it is already a `language:`
+    qualifier.
+- **Query building rewritten as a gradient** (`query.js`) — GitHub search is AND
+  semantics, so a single query carrying 8+ words matched nothing:
+  1. `name + 4 description words` (precise) →
+  2. `name`-only workhorse →
+  3. keyword groups of 3 (`in:description,topics`, up to 2 groups) →
+  4. wide fallback on the top 2 keywords **without** the `language:` qualifier →
+  5. dependency co-occurrence (`in:readme`), first to be dropped at the cap.
+  Hard cap of 5 queries per analysis (anonymous search allows 10/min), duplicates removed,
+  and description-only CJK bigrams never reach a query (they match nothing on GitHub).
 
 ## [0.1.0]
 
