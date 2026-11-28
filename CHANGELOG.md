@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5. dependency co-occurrence (`in:readme`), first to be dropped at the cap.
   Hard cap of 5 queries per analysis (anonymous search allows 10/min), duplicates removed,
   and description-only CJK bigrams never reach a query (they match nothing on GitHub).
+- **Spam-resistant ranking** (`score.js`) — keyword-stuffed junk repos used to top the list
+  (GitHub's auto-generated `<adjective>-<noun>` names, e.g. `Sfedfcv/redesigned-pancake`,
+  carrying a description full of the project's keywords):
+  - Popularity now only counts when the **repo name** shares a keyword with the project.
+    A keyword-stuffed description is cheap to fake; a matching name is not.
+  - Repos whose name matches GitHub's random-name shape *and* shares no keyword with the
+    project are dropped before ranking (and before `totalPool` is counted). A legitimate
+    `urban-robot` survives as soon as `robot` is one of its keywords.
 
 ## [0.1.0]
 

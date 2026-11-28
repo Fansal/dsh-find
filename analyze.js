@@ -1,8 +1,8 @@
 import { stat } from 'node:fs/promises'
-import { readProjectIntent } from './intent.js'
+import { extractKeywords, readProjectIntent } from './intent.js'
 import { buildSearchQueries } from './query.js'
 import { searchRepositories, GithubError } from './github.js'
-import { rankRepos, sortRepos } from './score.js'
+import { filterSpamRepos, rankRepos, sortRepos } from './score.js'
 import { llmRefineQueries, llmRerank } from './llm.js'
 import { summarizeRepo } from './summarize.js'
 import { sanitizeLimit } from './config.js'
@@ -149,7 +149,10 @@ export async function analyzeProject(path, opts = {}) {
     }
   }
 
-  const filtered = applyFilters(merged, config.filters)
+  // m06671: drop keyword-stuffed spam repos before the pool is counted, so
+  // totalPool reflects real candidates (rankRepos filters again, defensively).
+  const spamFree = filterSpamRepos(merged, extractKeywords(intent))
+  const filtered = applyFilters(spamFree, config.filters)
   // m04619: result cap is config-driven (settings page), clamped in config.js.
   const limit = sanitizeLimit(config.limit)
   let repos = deps.rankRepos(intent, filtered, limit, config.scoring?.weights)
